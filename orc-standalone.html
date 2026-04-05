@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ORC System — Interactive Exploded View</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
+  </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+/* ═══════════════════════════════════════════
+   THREE.JS HELPERS & COMPONENT BUILDERS
+   ═══════════════════════════════════════════ */
+
+function helixPts(turns, ppt, r, h, phase = 0) {
+  const pts = [], n = turns * ppt;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, a = t * turns * Math.PI * 2 + phase;
+    pts.push(new THREE.Vector3(Math.cos(a) * r, (t - 0.5) * h, Math.sin(a) * r));
+  }
+  return pts;
+}
+function lerpC(a, b, t) { return new THREE.Color(a.r+(b.r-a.r)*t, a.g+(b.g-a.g)*t, a.b+(b.b-a.b)*t); }
+function gradTube(pts, cA, cB, r = 0.05) {
+  const curve = new THREE.CatmullRomCurve3(pts, false);
+  const ts = pts.length*3, rs = 10;
+  const geo = new THREE.TubeGeometry(curve, ts, r, rs, false);
+  const colors = new Float32Array(geo.attributes.position.count * 3);
+  const ring = rs+1, rings = ts+1, ca = new THREE.Color(cA), cb = new THREE.Color(cB);
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    const c = lerpC(ca, cb, Math.floor(i/ring)/(rings-1));
+    colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  const m = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ vertexColors:true, metalness:0.55, roughness:0.25, clearcoat:0.3 }));
+  m.castShadow = true; return m;
+}
+function mkPipe(pts, col, r = 0.05) {
+  const m = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts,false), pts.length*5, r, 10, false),
+    new THREE.MeshPhysicalMaterial({ color:col, metalness:0.55, roughness:0.25, clearcoat:0.3 }));
+  m.castShadow = true; return m;
+}
+function mm(col, extra={}) { return new THREE.MeshPhysicalMaterial({ color:col, metalness:0.35, roughness:0.35, clearcoat:0.3, ...extra }); }
+function lbl(text, col, sz=44) {
+  const c = document.createElement("canvas"); c.width=1024; c.height=128;
+  const ctx = c.getContext("2d");
+  ctx.font = `bold ${sz}px monospace`; ctx.fillStyle = col; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(text, 512, 64);
+  return new THREE.Mesh(new THREE.PlaneGeometry(4.0,0.5),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent:true, side:THREE.DoubleSide, depthWrite:false }));
+}
+function toL(pp, wp) { return new THREE.Vector3(wp.x-pp.x, wp.y-pp.y, wp.z-pp.z); }
+
+/* Component builders (same as before, compact) */
+function buildHX() {
+  const g = new THREE.Group(), sR=0.7, sH=2.0;
+  g.userData.sR=sR; g.userData.sH=sH;
+  const hotCoil = new THREE.Group();
+  hotCoil.add(gradTube(helixPts(3,30,0.5,1.6,0), 0xee2222, 0x2266dd, 0.035));
+  const hcl = lbl("HEAT SOURCE COIL","#bb3322",36); hcl.position.set(0,sH/2+0.35,0); hcl.scale.set(0.55,0.55,1); hcl.visible=false;
+  hotCoil.add(hcl); g.add(hotCoil); g.userData.hotCoil=hotCoil; g.userData.hotCoilLabel=hcl;
+  const orcCoil = new THREE.Group();
+  orcCoil.add(gradTube(helixPts(3,30,0.5,1.6,Math.PI), 0x2266dd, 0xee2222, 0.035));
+  const ocl = lbl("ORC FLUID COIL","#1a55bb",36); ocl.position.set(0,sH/2+0.35,0); ocl.scale.set(0.55,0.55,1); ocl.visible=false;
+  orcCoil.add(ocl); g.add(orcCoil); g.userData.orcCoil=orcCoil; g.userData.orcCoilLabel=ocl;
+  const shell = new THREE.Group();
+  shell.add(new THREE.Mesh(new THREE.CylinderGeometry(sR,sR,sH,20), mm(0xb0c4d8,{transparent:true,opacity:0.85})));
+  const capG = new THREE.CylinderGeometry(sR,sR,0.04,20), capM = mm(0xc4d4e4,{transparent:true,opacity:0.85});
+  const tc = new THREE.Mesh(capG,capM); tc.position.y=sH/2; shell.add(tc);
+  const bc = new THREE.Mesh(capG.clone(),capM.clone()); bc.position.y=-sH/2; shell.add(bc);
+  const sl = lbl("HEAT EXCHANGER","#2a4055",40); sl.position.set(0,0,sR+0.22); sl.scale.set(0.75,0.75,1); shell.add(sl);
+  g.add(shell); g.userData.shell=shell;
+  return g;
+}
+function buildTurbine() {
+  const g = new THREE.Group(), bodyR=0.55, bodyH=1.1, nStages=5, nBlades=10;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR+0.05,bodyH,20), mm(0xa8bcd0,{transparent:true,opacity:0.85})));
+  const tc2 = new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR,0.04,20), mm(0xc0d0dd,{transparent:true,opacity:0.85}));
+  tc2.position.y=bodyH/2; casing.add(tc2);
+  const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.25,bodyR-0.05,0.35,16), mm(0xb8c8d8,{transparent:true,opacity:0.85}));
+  intake.position.y=bodyH/2+0.18; casing.add(intake);
+  const bc2 = new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.05,bodyR+0.05,0.04,20), mm(0xc0d0dd,{transparent:true,opacity:0.85}));
+  bc2.position.y=-bodyH/2; casing.add(bc2);
+  for(let i=0;i<4;i++){const r=new THREE.Mesh(new THREE.TorusGeometry(bodyR+0.02,0.02,6,24),mm(0xd0dde8,{transparent:true,opacity:0.85}));r.position.y=-bodyH*0.35+i*bodyH*0.24;r.rotation.x=Math.PI/2;casing.add(r);}
+  const cl = lbl("TURBINE","#2a4055",44); cl.position.set(0,0,bodyR+0.18); casing.add(cl);
+  g.add(casing); g.userData.casing=casing;
+  const internals = new THREE.Group();
+  internals.add(new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,bodyH+0.3,8), mm(0xcccccc)));
+  const stages = [];
+  for(let s=0;s<nStages;s++){
+    const stage=new THREE.Group(), yPos=-bodyH*0.38+s*(bodyH*0.76/(nStages-1)), isRotor=s%2===0;
+    const hubR=isRotor?0.1:bodyR-0.02;
+    stage.add(new THREE.Mesh(new THREE.CylinderGeometry(hubR,hubR,0.012,16), mm(isRotor?0xddbb44:0xbbccdd)));
+    for(let b=0;b<nBlades;b++){
+      const angle=(b/nBlades)*Math.PI*2, bladeLen=isRotor?0.36:0.34;
+      const blade=new THREE.Mesh(new THREE.BoxGeometry(bladeLen,0.015,0.08), mm(isRotor?0xddcc55:0xc0d0e0));
+      const midR=isRotor?0.1+bladeLen/2:bodyR-0.04-bladeLen/2;
+      blade.position.set(Math.cos(angle)*midR,0,Math.sin(angle)*midR);
+      blade.rotation.y=-angle; blade.rotation.x=isRotor?0.25:-0.2; stage.add(blade);
+    }
+    if(s===0||s===nStages-1){const sl2=lbl(isRotor?"ROTOR":"STATOR",isRotor?"#998822":"#556688",28);sl2.position.set(0,0,bodyR-0.1);sl2.scale.set(0.3,0.3,1);sl2.visible=false;stage.add(sl2);stage.userData.stageLabel=sl2;}
+    stage.position.y=yPos; stages.push(stage); internals.add(stage);
+  }
+  g.add(internals); g.userData.internals=internals; g.userData.stages=stages; g.userData.bodyH=bodyH;
+  return g;
+}
+function buildGenerator() {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1.0,14), mm(0x66cc99)));
+  for(const y of[-0.5,0.5]){const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.42,0.04,14),mm(0xddaa44));cap.position.y=y;g.add(cap);}
+  for(let i=0;i<3;i++){const c=new THREE.Mesh(new THREE.TorusGeometry(0.42,0.015,6,16),mm(0xeebb55));c.position.y=-0.3+i*0.3;c.rotation.x=Math.PI/2;g.add(c);}
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.6,8),mm(0xbbbbbb));shaft.position.y=0.8;g.add(shaft);
+  const l=lbl("GENERATOR","#1a7050",40);l.position.set(0,0,0.56);g.add(l);
+  return g;
+}
+function buildCondenser() {
+  const g = new THREE.Group(), bW=1.0, bH=0.8, bD=0.6;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.BoxGeometry(bW,bH,bD), mm(0x88bbee,{transparent:true,opacity:0.85})));
+  casing.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(bW+0.005,bH+0.005,bD+0.005)),new THREE.LineBasicMaterial({color:0x6699cc,transparent:true,opacity:0.6})));
+  for(let i=-4;i<=4;i++){const f=new THREE.Mesh(new THREE.BoxGeometry(0.98,0.006,bD+0.04),mm(0xaaddff,{transparent:true,opacity:0.85}));f.position.y=i*0.04;casing.add(f);}
+  const cl=lbl("CONDENSER","#1a5588",42);cl.position.set(0,0,bD/2+0.16);casing.add(cl);
+  g.add(casing); g.userData.casing=casing;
+  const internals = new THREE.Group();
+  const sheetMat=mm(0xccddee);
+  const ls=new THREE.Mesh(new THREE.BoxGeometry(0.03,bH*0.8,bD*0.8),sheetMat);ls.position.x=-bW/2+0.04;internals.add(ls);
+  const rs2=new THREE.Mesh(new THREE.BoxGeometry(0.03,bH*0.8,bD*0.8),sheetMat.clone());rs2.position.x=bW/2-0.04;internals.add(rs2);
+  for(let r=0;r<3;r++)for(let c=0;c<4;c++){const t=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,bW-0.12,6),mm(0x55aadd));t.rotation.z=Math.PI/2;t.position.set(0,-bH*0.25+r*bH*0.25,-bD*0.2+c*bD*0.14);internals.add(t);}
+  const baffles=[];
+  for(let i=0;i<4;i++){const baffle=new THREE.Group(),xPos=-bW*0.32+i*(bW*0.64/3),isTop=i%2===0;
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.012,bH*0.55,bD*0.7),mm(0xddaa66));plate.position.y=isTop?-bH*0.1:bH*0.1;baffle.add(plate);
+    if(i===1||i===2){const bl=lbl("BAFFLE","#997733",24);bl.position.set(0,isTop?bH*0.55/2+0.12:-bH*0.55/2-0.12,0);bl.scale.set(0.25,0.25,1);bl.visible=false;baffle.add(bl);baffle.userData.baffleLabel=bl;}
+    baffle.position.x=xPos;baffle.userData.homeX=xPos;baffles.push(baffle);internals.add(baffle);}
+  const tl=lbl("COOLING TUBES","#2277aa",28);tl.position.set(0,bH*0.42,0);tl.scale.set(0.35,0.35,1);tl.visible=false;internals.add(tl);
+  g.add(internals);g.userData.internals=internals;g.userData.baffles=baffles;g.userData.tubeLbl=tl;g.userData.bW=bW;
+  return g;
+}
+function buildPump() {
+  const g = new THREE.Group(), bodyR=0.35, bodyH=0.5;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR+0.04,bodyH,18),mm(0x9999cc,{transparent:true,opacity:0.85})));
+  const flM=mm(0xaaaadd,{transparent:true,opacity:0.85});
+  const tf=new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.06,bodyR+0.06,0.03,18),flM);tf.position.y=bodyH/2;casing.add(tf);
+  const bf=new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.08,bodyR+0.08,0.03,18),flM.clone());bf.position.y=-bodyH/2;casing.add(bf);
+  const cl=lbl("PUMP","#4455aa",44);cl.position.set(0,0,bodyR+0.16);casing.add(cl);
+  g.add(casing);g.userData.casing=casing;
+  const motorGroup=new THREE.Group();
+  motorGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.24,0.35,12),mm(0x8888bb)));
+  const mc=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.2,0.04,12),mm(0xaaaacc));mc.position.y=0.18;motorGroup.add(mc);
+  const ml=lbl("MOTOR","#555588",28);ml.position.set(0,0,0.28);ml.scale.set(0.35,0.35,1);ml.visible=false;motorGroup.add(ml);
+  motorGroup.position.y=bodyH/2+0.2;g.add(motorGroup);g.userData.motorGroup=motorGroup;g.userData.motorLbl=ml;
+  const internals=new THREE.Group();
+  internals.add(new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,bodyH+0.4,8),mm(0xcccccc)));
+  const impeller=new THREE.Group();
+  impeller.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.04,12),mm(0xddcc55)));
+  const topShroud = new THREE.Mesh(new THREE.CylinderGeometry(0.26,0.26,0.008,18),mm(0xddbb44));
+  topShroud.position.y = 0.025; impeller.add(topShroud);
+  const botShroud = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,0.008,18),mm(0xddbb44));
+  botShroud.position.y = -0.025; impeller.add(botShroud);
+  for(let v=0;v<7;v++){const angle=(v/7)*Math.PI*2;const vane=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.035,0.012),mm(0xeedd55));vane.position.set(Math.cos(angle)*0.13,0,Math.sin(angle)*0.13);vane.rotation.y=-angle+0.4;impeller.add(vane);}
+  const il=lbl("IMPELLER","#998822",28);il.position.set(0,0.2,0);il.scale.set(0.3,0.3,1);il.visible=false;impeller.add(il);impeller.userData.impLbl=il;
+  internals.add(impeller);
+  g.add(internals);g.userData.internals=internals;g.userData.impeller=impeller;g.userData.bodyH=bodyH;
+  return g;
+}
+function buildEnclosure(w,h,d) {
+  const g = new THREE.Group(), geo = new THREE.BoxGeometry(w,h,d);
+  g.add(new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({color:0xc0ccd8,transparent:true,opacity:0.92,metalness:0.15,roughness:0.6,side:THREE.DoubleSide,depthWrite:false})));
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0x8899aa,transparent:true,opacity:0.7})));
+  return g;
+}
+
+/* ═══════════════════════════════════════════
+   NARRATIVE STAGE CONTENT
+   ═══════════════════════════════════════════ */
+
+const STAGES = [
+  { title: "The Food Canning Plant", text: "This food canning plant uses large amounts of hot water to sterilize cans and process food. The water comes out at about 85°C (185°F) — too hot to discharge safely." },
+  { title: "The Problem: Thermal Pollution", text: "Without treatment, this hot water flows directly into the river, raising water temperatures, lowering dissolved oxygen, and harming aquatic life. This is called thermal pollution." },
+  { title: "The Solution: ORC System", text: "An Organic Rankine Cycle (ORC) unit captures the waste heat. Hot water enters at 85°C and exits at just 35°C — cool enough to return to the plant for reuse. A closed loop." },
+  { title: "Generating Clean Electricity", text: "The captured heat generates about 150 kW of electricity — enough to power parts of the plant. It's free energy from heat that would otherwise be wasted!" },
+  { title: "Inside the ORC System", text: "Use the slider to explore: an organic working fluid is evaporated by hot water, spins a turbine to generate electricity, gets condensed back to liquid, and is pumped back to start again." },
+];
+
+/* SVG illustrations for stages 0-3 */
+function NarrativeSVG({ stage }) {
+  const W = 900, H = 480;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 860, height: "auto" }}>
+      <defs>
+        <linearGradient id="gHot" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#ff6b35"/><stop offset="100%" stopColor="#ee3333"/></linearGradient>
+        <linearGradient id="gCool" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#4fc3f7"/><stop offset="100%" stopColor="#2266dd"/></linearGradient>
+        <linearGradient id="gElec"><stop offset="0%" stopColor="#ffeb3b"/><stop offset="100%" stopColor="#ff9800"/></linearGradient>
+        <linearGradient id="gBldg" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stopColor="#4a6572"/><stop offset="100%" stopColor="#37474f"/></linearGradient>
+      </defs>
+
+      {/* Ground */}
+      <rect x="0" y="360" width={W} height="120" fill="#1e3244" rx="0"/>
+
+      {/* Factory — always visible in stages 0-3 */}
+      <g>
+        <rect x="60" y="180" width="260" height="180" fill="url(#gBldg)" rx="4" stroke="#607d8b" strokeWidth="1"/>
+        <polygon points="50,180 190,120 330,180" fill="#546e7a" stroke="#607d8b" strokeWidth="1"/>
+        {[0,1,2,3].map(i=><rect key={i} x={85+i*55} y="215" width="35" height="28" fill="#1a237e" opacity="0.5" rx="2"/>)}
+        {[0,1,2,3].map(i=><rect key={`w${i}`} x={87+i*55} y="217" width="31" height="24" fill="#ffcc02" opacity="0.12" rx="1"/>)}
+        <rect x="160" y="300" width="45" height="60" fill="#1a237e" opacity="0.4" rx="2"/>
+        <rect x="110" y="110" width="18" height="70" fill="#546e7a" rx="2"/>
+        <rect x="240" y="130" width="18" height="50" fill="#546e7a" rx="2"/>
+        <circle cx="119" cy="102" r="6" fill="#90a4ae" opacity="0.3"/>
+        <circle cx="116" cy="90" r="8" fill="#90a4ae" opacity="0.25"/>
+        <circle cx="249" cy="124" r="5" fill="#90a4ae" opacity="0.2"/>
+        <text x="190" y="275" textAnchor="middle" fill="#64b5f6" fontSize="13" fontWeight="600">Food Canning</text>
+        <text x="190" y="292" textAnchor="middle" fill="#64b5f6" fontSize="13" fontWeight="600">Plant</text>
+      </g>
+
+      {/* Stage 0: just the factory */}
+
+      {/* Stage 1: hot water to river */}
+      {stage === 1 && <>
+        {/* Hot water pipe from factory */}
+        <line x1="320" y1="320" x2="500" y2="320" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="320" y1="320" x2="500" y2="320" stroke="url(#gHot)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="370" y="293" width="60" height="20" fill="rgba(255,107,53,0.2)" rx="10" stroke="#ff6b35" strokeWidth="1"/>
+        <text x="400" y="307" textAnchor="middle" fill="#ff6b35" fontSize="11" fontWeight="600">85°C</text>
+      </>}
+
+      {stage === 1 && <>
+        {/* Arrow to river */}
+        <path d="M 500 320 Q 570 310, 620 320 Q 670 330, 720 320 Q 760 312, 790 320" stroke="#ff6b35" strokeWidth="3.5" fill="none" strokeDasharray="7 4"/>
+        <polygon points="788,313 800,320 788,327" fill="#ff6b35"/>
+        {/* River */}
+        <path d="M 780 360 Q 820 340, 860 360 L 900 360 L 900 480 L 780 480 Z" fill="#1565c0" opacity="0.35"/>
+        <text x="845" y="400" textAnchor="middle" fill="#90caf9" fontSize="11" opacity="0.7">River</text>
+        {/* Warning */}
+        <text x="650" y="298" textAnchor="middle" fill="#ff5252" fontSize="13" fontWeight="700">⚠ Thermal Pollution</text>
+        <text x="650" y="345" textAnchor="middle" fill="#ff8a65" fontSize="11">Hot water harms aquatic life!</text>
+      </>}
+
+      {/* Stage 2: ORC box installed */}
+      {stage >= 2 && <>
+        {/* ORC Box */}
+        <rect x="480" y="220" width="190" height="130" fill="#1a3a4a" rx="8" stroke="#4fc3f7" strokeWidth="2"/>
+        <rect x="480" y="220" width="190" height="26" fill="rgba(79,195,247,0.1)" rx="8"/>
+        <text x="575" y="239" textAnchor="middle" fill="#4fc3f7" fontSize="13" fontWeight="700">ORC Unit</text>
+        <circle cx="652" cy="233" r="4" fill="#4caf50"/>
+
+        {/* Hot water pipe into ORC */}
+        <line x1="320" y1="320" x2="480" y2="270" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="320" y1="320" x2="480" y2="270" stroke="url(#gHot)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="360" y="265" width="60" height="20" fill="rgba(255,107,53,0.2)" rx="10" stroke="#ff6b35" strokeWidth="1"/>
+        <text x="390" y="279" textAnchor="middle" fill="#ff6b35" fontSize="11" fontWeight="600">85°C</text>
+
+        {/* Cool water pipe BACK TO FACTORY */}
+        <line x1="480" y1="320" x2="320" y2="350" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="480" y1="320" x2="320" y2="350" stroke="url(#gCool)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="360" y="332" width="60" height="20" fill="rgba(79,195,247,0.2)" rx="10" stroke="#4fc3f7" strokeWidth="1"/>
+        <text x="390" y="346" textAnchor="middle" fill="#4fc3f7" fontSize="11" fontWeight="600">35°C</text>
+        <text x="340" y="388" textAnchor="middle" fill="#66bb6a" fontSize="11">↩ Cooled water returns to plant</text>
+      </>}
+
+      {/* Stage 3: Electricity output */}
+      {stage >= 3 && <>
+        <line x1="575" y1="220" x2="575" y2="165" stroke="#ffeb3b" strokeWidth="2.5" strokeDasharray="5 3"/>
+        <line x1="575" y1="165" x2="740" y2="165" stroke="#ffeb3b" strokeWidth="2.5" strokeDasharray="5 3"/>
+        <polygon points="8,0 0,18 10,18 4,35 22,13 12,13 18,0" fill="url(#gElec)" transform="translate(732,148)"/>
+        <rect x="720" y="140" width="110" height="50" fill="#1a2a1a" rx="8" stroke="#66bb6a" strokeWidth="1.5"/>
+        <text x="775" y="160" textAnchor="middle" fill="#66bb6a" fontSize="10" fontWeight="600">POWER OUTPUT</text>
+        <text x="775" y="180" textAnchor="middle" fill="#76ff03" fontSize="18" fontWeight="700">150 kW</text>
+        <text x="775" y="205" textAnchor="middle" fill="#b0c4de" fontSize="10">Powers parts of the plant!</text>
+      </>}
+    </svg>
+  );
+}
+
+/* ═══════════════════════════════════════════
+   MAIN COMPONENT
+   ═══════════════════════════════════════════ */
+
+function ORCSystem() {
+  const mountRef = useRef(null);
+  const sceneRef = useRef({});
+  const [stage, setStage] = useState(0);
+  const [explode, setExplode] = useState(0);
+  const [isRotating, setIsRotating] = useState(true);
+  const frameRef = useRef(null);
+  const isDragging = useRef(false);
+  const lastMouse = useRef({ x:0, y:0 });
+  const camAngle = useRef({ theta:0.5, phi:0.92, radius:9 });
+  const threeReady = useRef(false);
+
+  const is3D = stage === 4;
+
+  /* ─── THREE.JS INIT ─── */
+  const initScene = useCallback((container) => {
+    if (!container || sceneRef.current.renderer) return;
+    const w = container.clientWidth, h = container.clientHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f2f5);
+    scene.fog = new THREE.FogExp2(0xf0f2f5, 0.012);
+    const camera = new THREE.PerspectiveCamera(45, w/h, 0.1, 200);
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(w,h); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.shadowMap.enabled=true; renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.2;
+    container.appendChild(renderer.domElement);
+    scene.add(new THREE.AmbientLight(0x889aaa,1.0));
+    const key=new THREE.DirectionalLight(0xfff8ee,1.4);key.position.set(6,10,5);key.castShadow=true;scene.add(key);
+    const rim=new THREE.DirectionalLight(0x6688cc,0.4);rim.position.set(-5,3,-4);scene.add(rim);
+    const fill=new THREE.PointLight(0xffa866,0.3,15);fill.position.set(2,1,2);scene.add(fill);
+    const grid=new THREE.GridHelper(16,24,0xc8ccd2,0xdde0e6);grid.position.y=-2.5;scene.add(grid);
+    const P={hx:new THREE.Vector3(-1.5,0,0),turb:new THREE.Vector3(0.2,0.5,-1.3),gen:new THREE.Vector3(0.2,-1.1,-1.3),cond:new THREE.Vector3(1.8,0,0),pump:new THREE.Vector3(0.2,-0.1,1.3)};
+    const D={hx:new THREE.Vector3(-1,0,0),turb:new THREE.Vector3(0,0.4,-1),gen:new THREE.Vector3(0,-0.6,-1),cond:new THREE.Vector3(1,0,0),pump:new THREE.Vector3(0,0,1)};
+    const pR=0.045;
+    const hx=buildHX();hx.position.copy(P.hx);const sR=hx.userData.sR;
+    const hotCoil=hx.userData.hotCoil, orcCoil=hx.userData.orcCoil;
+    hotCoil.add(mkPipe([new THREE.Vector3(-sR-2.0,-0.8,0),new THREE.Vector3(-0.1,-0.8,0),new THREE.Vector3(0.5,-0.8,0)],0xee2222,0.055));
+    const hwInL=lbl("HOT WATER IN","#cc2222",44);hwInL.position.set(-sR-2.6,-0.8,0);hwInL.scale.set(0.6,0.6,1);hotCoil.add(hwInL);
+    hotCoil.add(mkPipe([new THREE.Vector3(-sR-2.0,0.8,0),new THREE.Vector3(-0.1,0.8,0),new THREE.Vector3(0.5,0.8,0)],0x2266dd,0.055));
+    const hwOutL=lbl("HOT WATER OUT","#1a55bb",44);hwOutL.position.set(-sR-2.7,0.8,0);hwOutL.scale.set(0.6,0.6,1);hotCoil.add(hwOutL);
+    const turbIntake=new THREE.Vector3(P.turb.x,P.turb.y+0.9,P.turb.z);
+    orcCoil.add(mkPipe([new THREE.Vector3(-0.5,0.8,0),new THREE.Vector3(0.2,0.8,0),new THREE.Vector3(sR+0.3,0.6,0),toL(P.hx,new THREE.Vector3(turbIntake.x,turbIntake.y,turbIntake.z+0.15)),toL(P.hx,turbIntake)],0xee2222,pR));
+    const pumpSide=new THREE.Vector3(P.pump.x-0.35,P.pump.y,P.pump.z);
+    orcCoil.add(mkPipe([new THREE.Vector3(-0.5,-0.8,0),new THREE.Vector3(0.2,-0.8,0),new THREE.Vector3(sR+0.3,-0.6,0),toL(P.hx,new THREE.Vector3(pumpSide.x,pumpSide.y,pumpSide.z-0.15)),toL(P.hx,pumpSide)],0x2266dd,pR));
+    scene.add(hx);
+    const turbine=buildTurbine();turbine.position.copy(P.turb);
+    const condLeft=new THREE.Vector3(P.cond.x-0.5,P.cond.y,P.cond.z);
+    turbine.add(gradTube([new THREE.Vector3(0.6,-0.1,0),new THREE.Vector3(0.85,-0.1,0),toL(P.turb,new THREE.Vector3(condLeft.x,condLeft.y,condLeft.z-0.3)),toL(P.turb,condLeft)],0xcc3333,0x3366bb,pR));
+    scene.add(turbine);
+    const generator=buildGenerator();generator.position.copy(P.gen);
+    generator.add(mkPipe([new THREE.Vector3(0,0,-0.42),new THREE.Vector3(0,0,-1.6)],0xccaa22,0.03));
+    const elecL=lbl("⚡ ELECTRICITY OUT","#997700",44);elecL.position.set(0,0.35,-2.0);elecL.scale.set(0.6,0.6,1);generator.add(elecL);
+    scene.add(generator);
+    const condenser=buildCondenser();condenser.position.copy(P.cond);
+    const pumpTop=new THREE.Vector3(P.pump.x,P.pump.y+0.55,P.pump.z);
+    condenser.add(mkPipe([new THREE.Vector3(0,-0.4,0),new THREE.Vector3(0,-0.6,0),toL(P.cond,new THREE.Vector3(pumpTop.x+0.15,pumpTop.y,pumpTop.z)),toL(P.cond,pumpTop)],0x2266dd,pR));
+    scene.add(condenser);
+    const pump=buildPump();pump.position.copy(P.pump);scene.add(pump);
+    const boxW=5.5,boxH=3.6,boxD=4.2;
+    const enclosure=buildEnclosure(boxW,boxH,boxD);enclosure.position.set(0,-0.1,-0.1);scene.add(enclosure);
+    const sysLabel=lbl("ORC  (ORGANIC RANKINE CYCLE)","#2a3344",46);sysLabel.position.set(0,0.8,boxD/2+0.02-0.1);scene.add(sysLabel);
+    const components=[{obj:hx,home:P.hx.clone(),dir:D.hx},{obj:turbine,home:P.turb.clone(),dir:D.turb},{obj:generator,home:P.gen.clone(),dir:D.gen},{obj:condenser,home:P.cond.clone(),dir:D.cond},{obj:pump,home:P.pump.clone(),dir:D.pump}];
+    sceneRef.current={scene,camera,renderer,fill,hx,turbine,condenser,pump,components,enclosure,sysLabel};
+    threeReady.current = true;
+  }, []);
+
+  /* ─── EXPLODE EFFECT ─── */
+  useEffect(() => {
+    const s = sceneRef.current; if(!s.hx) return;
+    const boxOpacity=Math.max(0,1-explode*20);
+    s.enclosure.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.isMesh)ch.material.opacity=0.92*boxOpacity;if(ch.isLineSegments)ch.material.opacity=0.7*Math.max(boxOpacity,0.12);ch.visible=ch.isLineSegments?(boxOpacity>0||explode<0.95):boxOpacity>0.01;}});
+    s.sysLabel.material.opacity=Math.max(0.3,boxOpacity);
+    const ex=Math.max(0,(explode-0.15)/0.85),spread=ex*2.5;
+    s.components.forEach(({obj,home,dir})=>{obj.position.set(home.x+dir.x*spread,home.y+dir.y*spread,home.z+dir.z*spread);});
+    const shellOp=Math.max(0,1-ex*2.8);
+    const shell=s.hx.userData.shell;
+    if(shell)shell.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*shellOp;ch.visible=shellOp>0.01;}});
+    const coilSpread=Math.max(0,ex-0.3)*3.5;
+    if(s.hx.userData.hotCoil){s.hx.userData.hotCoil.position.z=coilSpread;s.hx.userData.orcCoil.position.z=-coilSpread;const v=coilSpread>0.1;s.hx.userData.hotCoilLabel.visible=v;s.hx.userData.orcCoilLabel.visible=v;if(v){s.hx.userData.hotCoilLabel.material.opacity=Math.min(1,(coilSpread-0.1)*3);s.hx.userData.orcCoilLabel.material.opacity=Math.min(1,(coilSpread-0.1)*3);}}
+    if(s.turbine&&s.turbine.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.turbine.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const ss=Math.max(0,ex-0.25)*2.8,stages=s.turbine.userData.stages,bH=s.turbine.userData.bodyH;if(stages)for(let i=0;i<stages.length;i++){const baseY=-bH*0.38+i*(bH*0.76/(stages.length-1));stages[i].position.y=baseY+(i-(stages.length-1)/2)*ss*0.4;if(stages[i].userData.stageLabel){stages[i].userData.stageLabel.visible=ss>0.2;if(ss>0.2)stages[i].userData.stageLabel.material.opacity=Math.min(1,(ss-0.2)*3);}}}
+    if(s.condenser&&s.condenser.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.condenser.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const bs=Math.max(0,ex-0.25)*2.5,baffles=s.condenser.userData.baffles;if(baffles)for(let i=0;i<baffles.length;i++){baffles[i].position.x=baffles[i].userData.homeX+(i-(baffles.length-1)/2)*bs*0.3;if(baffles[i].userData.baffleLabel){baffles[i].userData.baffleLabel.visible=bs>0.2;if(bs>0.2)baffles[i].userData.baffleLabel.material.opacity=Math.min(1,(bs-0.2)*3);}}
+      if(s.condenser.userData.tubeLbl){const st=bs>0.15;s.condenser.userData.tubeLbl.visible=st;if(st)s.condenser.userData.tubeLbl.material.opacity=Math.min(1,(bs-0.15)*3);}}
+    if(s.pump&&s.pump.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.pump.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const ml2=Math.max(0,ex-0.3)*2.0;if(s.pump.userData.motorGroup){s.pump.userData.motorGroup.position.y=s.pump.userData.bodyH/2+0.2+ml2;if(s.pump.userData.motorLbl){s.pump.userData.motorLbl.visible=ml2>0.1;if(ml2>0.1)s.pump.userData.motorLbl.material.opacity=Math.min(1,(ml2-0.1)*3);}}
+      const id=Math.max(0,ex-0.35)*1.0;if(s.pump.userData.impeller){s.pump.userData.impeller.position.y=-id;const il2=s.pump.userData.impeller.userData.impLbl;if(il2){il2.visible=id>0.05;if(id>0.05)il2.material.opacity=Math.min(1,(id-0.05)*4);}}}
+  }, [explode]);
+
+  /* ─── RENDER LOOP ─── */
+  useEffect(() => {
+    const s = sceneRef.current; if(!s.renderer) return;
+    let t = 0;
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate); t += 0.003;
+      if(isRotating) camAngle.current.theta += 0.002;
+      const{theta,phi,radius}=camAngle.current;
+      s.camera.position.set(radius*Math.sin(phi)*Math.cos(theta),radius*Math.cos(phi),radius*Math.sin(phi)*Math.sin(theta));
+      s.camera.lookAt(0,-0.2,0);
+      if(s.fill) s.fill.intensity=0.3+Math.sin(t*4)*0.04;
+      if(s.turbine&&s.turbine.userData.stages)s.turbine.userData.stages.forEach((st,i)=>{if(i%2===0)st.rotation.y=t*8;});
+      if(s.pump&&s.pump.userData.impeller)s.pump.userData.impeller.rotation.y=t*10;
+      s.renderer.render(s.scene,s.camera);
+    };
+    animate();
+    return ()=>{if(frameRef.current)cancelAnimationFrame(frameRef.current);};
+  }, [isRotating]);
+
+  /* ─── ORBIT CONTROLS ─── */
+  useEffect(() => {
+    const el=mountRef.current;if(!el) return;
+    const onDown=e=>{isDragging.current=true;const cx=e.touches?e.touches[0].clientX:e.clientX;const cy=e.touches?e.touches[0].clientY:e.clientY;lastMouse.current={x:cx,y:cy};setIsRotating(false);};
+    const onMove=e=>{if(!isDragging.current)return;const cx=e.touches?e.touches[0].clientX:e.clientX;const cy=e.touches?e.touches[0].clientY:e.clientY;camAngle.current.theta-=(cx-lastMouse.current.x)*0.005;camAngle.current.phi=Math.max(0.3,Math.min(2.8,camAngle.current.phi-(cy-lastMouse.current.y)*0.005));lastMouse.current={x:cx,y:cy};};
+    const onUp=()=>{isDragging.current=false;};
+    el.addEventListener("mousedown",onDown);el.addEventListener("mousemove",onMove);el.addEventListener("mouseup",onUp);el.addEventListener("mouseleave",onUp);
+    el.addEventListener("touchstart",onDown,{passive:true});el.addEventListener("touchmove",onMove,{passive:true});el.addEventListener("touchend",onUp);
+    return()=>{el.removeEventListener("mousedown",onDown);el.removeEventListener("mousemove",onMove);el.removeEventListener("mouseup",onUp);el.removeEventListener("mouseleave",onUp);el.removeEventListener("touchstart",onDown);el.removeEventListener("touchmove",onMove);el.removeEventListener("touchend",onUp);};
+  }, []);
+
+  useEffect(() => {
+    const onResize=()=>{const s=sceneRef.current,el=mountRef.current;if(!s.renderer||!el)return;s.camera.aspect=el.clientWidth/el.clientHeight;s.camera.updateProjectionMatrix();s.renderer.setSize(el.clientWidth,el.clientHeight);};
+    window.addEventListener("resize",onResize);return()=>window.removeEventListener("resize",onResize);
+  }, []);
+
+  const setMount = useCallback((node) => {
+    mountRef.current = node; if(node) initScene(node);
+  }, [initScene]);
+
+  const goNext = () => { if(stage < 4) setStage(stage+1); };
+  const goPrev = () => { if(stage > 0) setStage(stage-1); };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if(e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); goNext(); }
+      else if(e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const info = STAGES[stage];
+
+  /* ═══ RENDER ═══ */
+  return (
+    <div style={{
+      width:"100%", height:"100vh", background: is3D ? "#f0f2f5" : "#0e1a2e",
+      display:"flex", flexDirection:"column", fontFamily:"'Segoe UI',system-ui,sans-serif",
+      color:"#e0e8f0", overflow:"hidden", transition:"background 0.6s",
+    }}>
+      {/* ─── TOP BAR: Title + Stage dots ─── */}
+      <div style={{
+        padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between",
+        borderBottom: is3D ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(100,180,255,0.15)",
+        background: is3D ? "rgba(240,242,245,0.95)" : "rgba(14,26,46,0.95)",
+        flexShrink:0, transition:"all 0.6s",
+      }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color: is3D ? "#1a2233" : "#64b5f6", letterSpacing:"0.04em" }}>
+            Organic Rankine Cycle System
+          </div>
+          <div style={{ fontSize:10, opacity:0.5, color: is3D ? "#556" : "#7a9cc6", marginTop:2 }}>
+            Reducing Thermal Pollution at a Food Canning Plant
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {STAGES.map((_, i) => (
+            <div key={i} onClick={() => setStage(i)} style={{
+              width: i === stage ? 28 : 11, height:11, borderRadius:6, cursor:"pointer",
+              background: i === stage ? "#64b5f6" : i < stage ? "rgba(100,180,255,0.4)" : "rgba(100,180,255,0.15)",
+              border: `1px solid ${i === stage ? "#64b5f6" : "rgba(100,180,255,0.3)"}`,
+              boxShadow: i === stage ? "0 0 8px rgba(100,180,255,0.5)" : "none",
+              transition:"all 0.3s",
+            }} />
+          ))}
+        </div>
+      </div>
+
+      {/* ─── MAIN CONTENT ─── */}
+      <div style={{ flex:1, position:"relative", minHeight:0 }}>
+        {/* Narrative SVG overlay (stages 0-3) */}
+        {!is3D && (
+          <div style={{
+            position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+            zIndex:2, padding:"20px",
+          }}>
+            <NarrativeSVG stage={stage} />
+          </div>
+        )}
+
+        {/* 3D Viewport (always mounted, hidden during narrative) */}
+        <div ref={setMount} style={{
+          width:"100%", height:"100%",
+          opacity: is3D ? 1 : 0,
+          pointerEvents: is3D ? "auto" : "none",
+          cursor:"grab", transition:"opacity 0.5s",
+        }} />
+      </div>
+
+      {/* ─── BOTTOM: Info + Controls ─── */}
+      <div style={{
+        padding: is3D ? "10px 24px 14px" : "16px 24px 20px",
+        borderTop: is3D ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(100,180,255,0.15)",
+        background: is3D ? "rgba(240,242,245,0.95)" : "rgba(10,22,40,0.92)",
+        flexShrink:0, transition:"all 0.6s",
+      }}>
+        {/* Info panel */}
+        <div style={{ maxWidth:700, margin:"0 auto", textAlign:"center", marginBottom: is3D ? 8 : 14 }}>
+          <div style={{ fontSize:16, fontWeight:700, color: is3D ? "#1a2233" : "#64b5f6", marginBottom:4 }}>
+            {info.title}
+          </div>
+          <div style={{ fontSize:13, lineHeight:1.5, color: is3D ? "#556" : "#b0c4de", opacity:0.85 }}>
+            {info.text}
+          </div>
+        </div>
+
+        {/* Slider (only stage 4) */}
+        {is3D && (
+          <div style={{ display:"flex", alignItems:"center", gap:14, maxWidth:600, margin:"0 auto 8px" }}>
+            <label style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.12em", opacity:0.5, color:"#334", whiteSpace:"nowrap" }}>Explode</label>
+            <div style={{ flex:1 }}>
+              <input type="range" min="0" max="100" value={explode*100}
+                onChange={e => setExplode(Number(e.target.value)/100)}
+                style={{ width:"100%", height:4, WebkitAppearance:"none", appearance:"none",
+                  background:`linear-gradient(90deg, #778899 0%, #cc2222 ${Math.min(explode*150,100)}%, rgba(0,0,0,0.08) ${Math.min(explode*150,100)}%)`,
+                  borderRadius:2, outline:"none", cursor:"pointer" }} />
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:3, fontSize:8, opacity:0.3, color:"#334" }}>
+                <span>ASSEMBLED</span><span>EXPLODED</span>
+              </div>
+            </div>
+            <div style={{ background:"rgba(0,0,0,0.04)", border:"1px solid rgba(0,0,0,0.1)", borderRadius:4, padding:"2px 8px", fontSize:12, color: explode<0.3?"#778899":"#cc2222", minWidth:42, textAlign:"center" }}>
+              {Math.round(explode*100)}%
+            </div>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <div style={{ display:"flex", justifyContent:"center", gap:10 }}>
+          <button onClick={goPrev} disabled={stage===0} style={{
+            background: is3D ? "rgba(0,0,0,0.05)" : "rgba(100,180,255,0.12)",
+            border: `1px solid ${is3D ? "rgba(0,0,0,0.12)" : "rgba(100,180,255,0.3)"}`,
+            color: is3D ? "#556" : "#64b5f6",
+            padding:"8px 20px", borderRadius:8, fontSize:14, cursor: stage===0?"not-allowed":"pointer",
+            opacity: stage===0?0.3:1, transition:"all 0.3s", fontFamily:"inherit",
+          }}>← Back</button>
+          <button onClick={goNext} disabled={stage===4} style={{
+            background: is3D ? "rgba(0,0,0,0.05)" : "rgba(100,180,255,0.15)",
+            border: `1px solid ${is3D ? "rgba(0,0,0,0.12)" : "rgba(100,180,255,0.4)"}`,
+            color: is3D ? "#556" : "#64b5f6",
+            padding:"8px 20px", borderRadius:8, fontSize:14, cursor: stage===4?"not-allowed":"pointer",
+            opacity: stage===4?0.3:1, transition:"all 0.3s", fontFamily:"inherit",
+          }}>Next →</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ORCSystem));
+  </script>
+</body>
+</html>
