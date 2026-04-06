@@ -3,749 +3,549 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>ORC System — Reducing Thermal Pollution</title>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.5/gsap.min.js"></script>
+  <title>ORC System — Interactive Exploded View</title>
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-      background: #0a1628;
-      color: #e0e8f0;
-      overflow: hidden;
-      height: 100vh;
-      width: 100vw;
-    }
-
-    #app {
-      width: 100vw;
-      height: 100vh;
-      position: relative;
-    }
-
-    svg#scene {
-      width: 100%;
-      height: 100%;
-      display: block;
-    }
-
-    /* Info panel */
-    #info-panel {
-      position: absolute;
-      bottom: 30px;
-      left: 50%;
-      transform: translateX(-50%);
-      background: rgba(10, 22, 40, 0.92);
-      border: 1px solid rgba(100, 180, 255, 0.3);
-      border-radius: 16px;
-      padding: 18px 32px;
-      max-width: 700px;
-      width: 90%;
-      text-align: center;
-      backdrop-filter: blur(12px);
-      z-index: 10;
-    }
-
-    #info-panel h2 {
-      font-size: 18px;
-      color: #64b5f6;
-      margin-bottom: 6px;
-    }
-
-    #info-panel p {
-      font-size: 14px;
-      line-height: 1.5;
-      color: #b0c4de;
-    }
-
-    /* Navigation */
-    #nav {
-      position: absolute;
-      bottom: 30px;
-      right: 30px;
-      z-index: 20;
-      display: flex;
-      gap: 10px;
-    }
-
-    .nav-btn {
-      background: rgba(100, 180, 255, 0.15);
-      border: 1px solid rgba(100, 180, 255, 0.4);
-      color: #64b5f6;
-      padding: 10px 22px;
-      border-radius: 10px;
-      font-size: 15px;
-      cursor: pointer;
-      transition: all 0.3s;
-    }
-
-    .nav-btn:hover {
-      background: rgba(100, 180, 255, 0.3);
-      border-color: #64b5f6;
-    }
-
-    .nav-btn:disabled {
-      opacity: 0.3;
-      cursor: not-allowed;
-    }
-
-    /* Stage indicators */
-    #stages {
-      position: absolute;
-      top: 20px;
-      left: 50%;
-      transform: translateX(-50%);
-      display: flex;
-      gap: 8px;
-      z-index: 10;
-    }
-
-    .stage-dot {
-      width: 12px;
-      height: 12px;
-      border-radius: 50%;
-      background: rgba(100, 180, 255, 0.2);
-      border: 1px solid rgba(100, 180, 255, 0.4);
-      transition: all 0.4s;
-      cursor: pointer;
-    }
-
-    .stage-dot.active {
-      background: #64b5f6;
-      box-shadow: 0 0 12px rgba(100, 180, 255, 0.6);
-    }
-
-    .stage-dot.completed {
-      background: rgba(100, 180, 255, 0.5);
-    }
-
-    /* Title */
-    #title {
-      position: absolute;
-      top: 20px;
-      left: 30px;
-      z-index: 10;
-    }
-
-    #title h1 {
-      font-size: 20px;
-      font-weight: 600;
-      color: #64b5f6;
-    }
-
-    #title span {
-      font-size: 12px;
-      color: #7a9cc6;
-    }
-
-    /* Temperature label styles */
-    .temp-label {
-      font-size: 13px;
-      font-weight: 600;
-      fill: #fff;
-    }
-
-    .label-text {
-      font-size: 11px;
-      fill: #b0c4de;
-      font-weight: 500;
-    }
-
-    .component-label {
-      font-size: 12px;
-      fill: #64b5f6;
-      font-weight: 600;
-      text-anchor: middle;
-    }
-
-    /* Animated water particles */
-    .water-particle {
-      opacity: 0;
-    }
-
-    /* Glow filter for SVG */
-    .glow {
-      filter: url(#glow-filter);
-    }
+    html, body, #root { width: 100%; height: 100%; overflow: hidden; }
   </style>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body>
-  <div id="app">
+  <div id="root"></div>
+  <script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
 
-    <div id="title">
-      <h1>Organic Rankine Cycle System</h1>
-      <span>Reducing Thermal Pollution at a Food Canning Plant</span>
-    </div>
+/* ═══════════════════════════════════════════
+   THREE.JS HELPERS & COMPONENT BUILDERS
+   ═══════════════════════════════════════════ */
 
-    <div id="stages"></div>
+function helixPts(turns, ppt, r, h, phase = 0) {
+  const pts = [], n = turns * ppt;
+  for (let i = 0; i <= n; i++) {
+    const t = i / n, a = t * turns * Math.PI * 2 + phase;
+    pts.push(new THREE.Vector3(Math.cos(a) * r, (t - 0.5) * h, Math.sin(a) * r));
+  }
+  return pts;
+}
+function lerpC(a, b, t) { return new THREE.Color(a.r+(b.r-a.r)*t, a.g+(b.g-a.g)*t, a.b+(b.b-a.b)*t); }
+function gradTube(pts, cA, cB, r = 0.05) {
+  const curve = new THREE.CatmullRomCurve3(pts, false);
+  const ts = pts.length*3, rs = 10;
+  const geo = new THREE.TubeGeometry(curve, ts, r, rs, false);
+  const colors = new Float32Array(geo.attributes.position.count * 3);
+  const ring = rs+1, rings = ts+1, ca = new THREE.Color(cA), cb = new THREE.Color(cB);
+  for (let i = 0; i < geo.attributes.position.count; i++) {
+    const c = lerpC(ca, cb, Math.floor(i/ring)/(rings-1));
+    colors[i*3]=c.r; colors[i*3+1]=c.g; colors[i*3+2]=c.b;
+  }
+  geo.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+  const m = new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({ vertexColors:true, metalness:0.55, roughness:0.25, clearcoat:0.3 }));
+  m.castShadow = true; return m;
+}
+function mkPipe(pts, col, r = 0.05) {
+  const m = new THREE.Mesh(
+    new THREE.TubeGeometry(new THREE.CatmullRomCurve3(pts,false), pts.length*5, r, 10, false),
+    new THREE.MeshPhysicalMaterial({ color:col, metalness:0.55, roughness:0.25, clearcoat:0.3 }));
+  m.castShadow = true; return m;
+}
+function mm(col, extra={}) { return new THREE.MeshPhysicalMaterial({ color:col, metalness:0.35, roughness:0.35, clearcoat:0.3, ...extra }); }
+function lbl(text, col, sz=44) {
+  const c = document.createElement("canvas"); c.width=1024; c.height=128;
+  const ctx = c.getContext("2d");
+  ctx.font = `bold ${sz}px monospace`; ctx.fillStyle = col; ctx.textAlign="center"; ctx.textBaseline="middle";
+  ctx.fillText(text, 512, 64);
+  return new THREE.Mesh(new THREE.PlaneGeometry(4.0,0.5),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(c), transparent:true, side:THREE.DoubleSide, depthWrite:false }));
+}
+function toL(pp, wp) { return new THREE.Vector3(wp.x-pp.x, wp.y-pp.y, wp.z-pp.z); }
 
-    <svg id="scene" viewBox="0 0 1200 700" preserveAspectRatio="xMidYMid meet">
+/* Component builders (same as before, compact) */
+function buildHX() {
+  const g = new THREE.Group(), sR=0.7, sH=2.0;
+  g.userData.sR=sR; g.userData.sH=sH;
+  const hotCoil = new THREE.Group();
+  hotCoil.add(gradTube(helixPts(3,30,0.5,1.6,0), 0xee2222, 0x2266dd, 0.035));
+  const hcl = lbl("HEAT SOURCE COIL","#bb3322",36); hcl.position.set(0,sH/2+0.35,0); hcl.scale.set(0.55,0.55,1); hcl.visible=false;
+  hotCoil.add(hcl); g.add(hotCoil); g.userData.hotCoil=hotCoil; g.userData.hotCoilLabel=hcl;
+  const orcCoil = new THREE.Group();
+  orcCoil.add(gradTube(helixPts(3,30,0.5,1.6,Math.PI), 0x2266dd, 0xee2222, 0.035));
+  const ocl = lbl("ORC FLUID COIL","#1a55bb",36); ocl.position.set(0,sH/2+0.35,0); ocl.scale.set(0.55,0.55,1); ocl.visible=false;
+  orcCoil.add(ocl); g.add(orcCoil); g.userData.orcCoil=orcCoil; g.userData.orcCoilLabel=ocl;
+  const shell = new THREE.Group();
+  shell.add(new THREE.Mesh(new THREE.CylinderGeometry(sR,sR,sH,20), mm(0xb0c4d8,{transparent:true,opacity:0.85})));
+  const capG = new THREE.CylinderGeometry(sR,sR,0.04,20), capM = mm(0xc4d4e4,{transparent:true,opacity:0.85});
+  const tc = new THREE.Mesh(capG,capM); tc.position.y=sH/2; shell.add(tc);
+  const bc = new THREE.Mesh(capG.clone(),capM.clone()); bc.position.y=-sH/2; shell.add(bc);
+  const sl = lbl("HEAT EXCHANGER","#2a4055",40); sl.position.set(0,0,sR+0.22); sl.scale.set(0.75,0.75,1); shell.add(sl);
+  g.add(shell); g.userData.shell=shell;
+  return g;
+}
+function buildTurbine() {
+  const g = new THREE.Group(), bodyR=0.55, bodyH=1.1, nStages=5, nBlades=10;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR+0.05,bodyH,20), mm(0xa8bcd0,{transparent:true,opacity:0.85})));
+  const tc2 = new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR,0.04,20), mm(0xc0d0dd,{transparent:true,opacity:0.85}));
+  tc2.position.y=bodyH/2; casing.add(tc2);
+  const intake = new THREE.Mesh(new THREE.CylinderGeometry(0.25,bodyR-0.05,0.35,16), mm(0xb8c8d8,{transparent:true,opacity:0.85}));
+  intake.position.y=bodyH/2+0.18; casing.add(intake);
+  const bc2 = new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.05,bodyR+0.05,0.04,20), mm(0xc0d0dd,{transparent:true,opacity:0.85}));
+  bc2.position.y=-bodyH/2; casing.add(bc2);
+  for(let i=0;i<4;i++){const r=new THREE.Mesh(new THREE.TorusGeometry(bodyR+0.02,0.02,6,24),mm(0xd0dde8,{transparent:true,opacity:0.85}));r.position.y=-bodyH*0.35+i*bodyH*0.24;r.rotation.x=Math.PI/2;casing.add(r);}
+  const cl = lbl("TURBINE","#2a4055",44); cl.position.set(0,0,bodyR+0.18); casing.add(cl);
+  g.add(casing); g.userData.casing=casing;
+  const internals = new THREE.Group();
+  internals.add(new THREE.Mesh(new THREE.CylinderGeometry(0.04,0.04,bodyH+0.3,8), mm(0xcccccc)));
+  const stages = [];
+  for(let s=0;s<nStages;s++){
+    const stage=new THREE.Group(), yPos=-bodyH*0.38+s*(bodyH*0.76/(nStages-1)), isRotor=s%2===0;
+    const hubR=isRotor?0.1:bodyR-0.02;
+    stage.add(new THREE.Mesh(new THREE.CylinderGeometry(hubR,hubR,0.012,16), mm(isRotor?0xddbb44:0xbbccdd)));
+    for(let b=0;b<nBlades;b++){
+      const angle=(b/nBlades)*Math.PI*2, bladeLen=isRotor?0.36:0.34;
+      const blade=new THREE.Mesh(new THREE.BoxGeometry(bladeLen,0.015,0.08), mm(isRotor?0xddcc55:0xc0d0e0));
+      const midR=isRotor?0.1+bladeLen/2:bodyR-0.04-bladeLen/2;
+      blade.position.set(Math.cos(angle)*midR,0,Math.sin(angle)*midR);
+      blade.rotation.y=-angle; blade.rotation.x=isRotor?0.25:-0.2; stage.add(blade);
+    }
+    if(s===0||s===nStages-1){const sl2=lbl(isRotor?"ROTOR":"STATOR",isRotor?"#998822":"#556688",28);sl2.position.set(0,0,bodyR-0.1);sl2.scale.set(0.3,0.3,1);sl2.visible=false;stage.add(sl2);stage.userData.stageLabel=sl2;}
+    stage.position.y=yPos; stages.push(stage); internals.add(stage);
+  }
+  g.add(internals); g.userData.internals=internals; g.userData.stages=stages; g.userData.bodyH=bodyH;
+  return g;
+}
+function buildGenerator() {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.CylinderGeometry(0.4,0.4,1.0,14), mm(0x66cc99)));
+  for(const y of[-0.5,0.5]){const cap=new THREE.Mesh(new THREE.CylinderGeometry(0.42,0.42,0.04,14),mm(0xddaa44));cap.position.y=y;g.add(cap);}
+  for(let i=0;i<3;i++){const c=new THREE.Mesh(new THREE.TorusGeometry(0.42,0.015,6,16),mm(0xeebb55));c.position.y=-0.3+i*0.3;c.rotation.x=Math.PI/2;g.add(c);}
+  const shaft=new THREE.Mesh(new THREE.CylinderGeometry(0.05,0.05,0.6,8),mm(0xbbbbbb));shaft.position.y=0.8;g.add(shaft);
+  const l=lbl("GENERATOR","#1a7050",40);l.position.set(0,0,0.56);g.add(l);
+  return g;
+}
+function buildCondenser() {
+  const g = new THREE.Group(), bW=1.0, bH=0.8, bD=0.6;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.BoxGeometry(bW,bH,bD), mm(0x88bbee,{transparent:true,opacity:0.85})));
+  casing.add(new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(bW+0.005,bH+0.005,bD+0.005)),new THREE.LineBasicMaterial({color:0x6699cc,transparent:true,opacity:0.6})));
+  for(let i=-4;i<=4;i++){const f=new THREE.Mesh(new THREE.BoxGeometry(0.98,0.006,bD+0.04),mm(0xaaddff,{transparent:true,opacity:0.85}));f.position.y=i*0.04;casing.add(f);}
+  const cl=lbl("CONDENSER","#1a5588",42);cl.position.set(0,0,bD/2+0.16);casing.add(cl);
+  g.add(casing); g.userData.casing=casing;
+  const internals = new THREE.Group();
+  const sheetMat=mm(0xccddee);
+  const ls=new THREE.Mesh(new THREE.BoxGeometry(0.03,bH*0.8,bD*0.8),sheetMat);ls.position.x=-bW/2+0.04;internals.add(ls);
+  const rs2=new THREE.Mesh(new THREE.BoxGeometry(0.03,bH*0.8,bD*0.8),sheetMat.clone());rs2.position.x=bW/2-0.04;internals.add(rs2);
+  for(let r=0;r<3;r++)for(let c=0;c<4;c++){const t=new THREE.Mesh(new THREE.CylinderGeometry(0.018,0.018,bW-0.12,6),mm(0x55aadd));t.rotation.z=Math.PI/2;t.position.set(0,-bH*0.25+r*bH*0.25,-bD*0.2+c*bD*0.14);internals.add(t);}
+  const baffles=[];
+  for(let i=0;i<4;i++){const baffle=new THREE.Group(),xPos=-bW*0.32+i*(bW*0.64/3),isTop=i%2===0;
+    const plate=new THREE.Mesh(new THREE.BoxGeometry(0.012,bH*0.55,bD*0.7),mm(0xddaa66));plate.position.y=isTop?-bH*0.1:bH*0.1;baffle.add(plate);
+    if(i===1||i===2){const bl=lbl("BAFFLE","#997733",24);bl.position.set(0,isTop?bH*0.55/2+0.12:-bH*0.55/2-0.12,0);bl.scale.set(0.25,0.25,1);bl.visible=false;baffle.add(bl);baffle.userData.baffleLabel=bl;}
+    baffle.position.x=xPos;baffle.userData.homeX=xPos;baffles.push(baffle);internals.add(baffle);}
+  const tl=lbl("COOLING TUBES","#2277aa",28);tl.position.set(0,bH*0.42,0);tl.scale.set(0.35,0.35,1);tl.visible=false;internals.add(tl);
+  g.add(internals);g.userData.internals=internals;g.userData.baffles=baffles;g.userData.tubeLbl=tl;g.userData.bW=bW;
+  return g;
+}
+function buildPump() {
+  const g = new THREE.Group(), bodyR=0.35, bodyH=0.5;
+  const casing = new THREE.Group();
+  casing.add(new THREE.Mesh(new THREE.CylinderGeometry(bodyR,bodyR+0.04,bodyH,18),mm(0x9999cc,{transparent:true,opacity:0.85})));
+  const flM=mm(0xaaaadd,{transparent:true,opacity:0.85});
+  const tf=new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.06,bodyR+0.06,0.03,18),flM);tf.position.y=bodyH/2;casing.add(tf);
+  const bf=new THREE.Mesh(new THREE.CylinderGeometry(bodyR+0.08,bodyR+0.08,0.03,18),flM.clone());bf.position.y=-bodyH/2;casing.add(bf);
+  const cl=lbl("PUMP","#4455aa",44);cl.position.set(0,0,bodyR+0.16);casing.add(cl);
+  g.add(casing);g.userData.casing=casing;
+  const motorGroup=new THREE.Group();
+  motorGroup.add(new THREE.Mesh(new THREE.CylinderGeometry(0.2,0.24,0.35,12),mm(0x8888bb)));
+  const mc=new THREE.Mesh(new THREE.CylinderGeometry(0.18,0.2,0.04,12),mm(0xaaaacc));mc.position.y=0.18;motorGroup.add(mc);
+  const ml=lbl("MOTOR","#555588",28);ml.position.set(0,0,0.28);ml.scale.set(0.35,0.35,1);ml.visible=false;motorGroup.add(ml);
+  motorGroup.position.y=bodyH/2+0.2;g.add(motorGroup);g.userData.motorGroup=motorGroup;g.userData.motorLbl=ml;
+  const internals=new THREE.Group();
+  internals.add(new THREE.Mesh(new THREE.CylinderGeometry(0.025,0.025,bodyH+0.4,8),mm(0xcccccc)));
+  const impeller=new THREE.Group();
+  impeller.add(new THREE.Mesh(new THREE.CylinderGeometry(0.06,0.06,0.04,12),mm(0xddcc55)));
+  const topShroud = new THREE.Mesh(new THREE.CylinderGeometry(0.26,0.26,0.008,18),mm(0xddbb44));
+  topShroud.position.y = 0.025; impeller.add(topShroud);
+  const botShroud = new THREE.Mesh(new THREE.CylinderGeometry(0.28,0.28,0.008,18),mm(0xddbb44));
+  botShroud.position.y = -0.025; impeller.add(botShroud);
+  for(let v=0;v<7;v++){const angle=(v/7)*Math.PI*2;const vane=new THREE.Mesh(new THREE.BoxGeometry(0.2,0.035,0.012),mm(0xeedd55));vane.position.set(Math.cos(angle)*0.13,0,Math.sin(angle)*0.13);vane.rotation.y=-angle+0.4;impeller.add(vane);}
+  const il=lbl("IMPELLER","#998822",28);il.position.set(0,0.2,0);il.scale.set(0.3,0.3,1);il.visible=false;impeller.add(il);impeller.userData.impLbl=il;
+  internals.add(impeller);
+  g.add(internals);g.userData.internals=internals;g.userData.impeller=impeller;g.userData.bodyH=bodyH;
+  return g;
+}
+function buildEnclosure(w,h,d) {
+  const g = new THREE.Group(), geo = new THREE.BoxGeometry(w,h,d);
+  g.add(new THREE.Mesh(geo, new THREE.MeshPhysicalMaterial({color:0xc0ccd8,transparent:true,opacity:0.92,metalness:0.15,roughness:0.6,side:THREE.DoubleSide,depthWrite:false})));
+  g.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo),new THREE.LineBasicMaterial({color:0x8899aa,transparent:true,opacity:0.7})));
+  return g;
+}
+
+/* ═══════════════════════════════════════════
+   NARRATIVE STAGE CONTENT
+   ═══════════════════════════════════════════ */
+
+const STAGES = [
+  { title: "The Food Canning Plant", text: "This food canning plant uses large amounts of hot water to sterilize cans and process food. The water comes out at about 85°C (185°F) — too hot to discharge safely." },
+  { title: "The Problem: Thermal Pollution", text: "Without treatment, this hot water flows directly into the river, raising water temperatures, lowering dissolved oxygen, and harming aquatic life. This is called thermal pollution." },
+  { title: "The Solution: ORC System", text: "An Organic Rankine Cycle (ORC) unit captures the waste heat. Hot water enters at 85°C and exits at just 35°C — cool enough to return to the plant for reuse. A closed loop." },
+  { title: "Generating Clean Electricity", text: "The captured heat generates about 150 kW of electricity — enough to power parts of the plant. It's free energy from heat that would otherwise be wasted!" },
+  { title: "Inside the ORC System", text: "Use the slider to explore: an organic working fluid is evaporated by hot water, spins a turbine to generate electricity, gets condensed back to liquid, and is pumped back to start again." },
+];
+
+/* SVG illustrations for stages 0-3 */
+function NarrativeSVG({ stage }) {
+  const W = 900, H = 480;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} style={{ width: "100%", maxWidth: 860, height: "auto" }}>
       <defs>
-        <!-- Glow filter -->
-        <filter id="glow-filter" x="-50%" y="-50%" width="200%" height="200%">
-          <feGaussianBlur stdDeviation="3" result="blur"/>
-          <feMerge>
-            <feMergeNode in="blur"/>
-            <feMergeNode in="SourceGraphic"/>
-          </feMerge>
-        </filter>
-
-        <!-- Water gradient (hot) -->
-        <linearGradient id="hot-water" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#ff6b35"/>
-          <stop offset="100%" style="stop-color:#ff4444"/>
-        </linearGradient>
-
-        <!-- Water gradient (cool) -->
-        <linearGradient id="cool-water" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#4fc3f7"/>
-          <stop offset="100%" style="stop-color:#2196f3"/>
-        </linearGradient>
-
-        <!-- Working fluid gradient -->
-        <linearGradient id="fluid-hot" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#ff9800"/>
-          <stop offset="100%" style="stop-color:#ff5722"/>
-        </linearGradient>
-
-        <linearGradient id="fluid-cool" x1="0%" y1="0%" x2="100%" y2="0%">
-          <stop offset="0%" style="stop-color:#66bb6a"/>
-          <stop offset="100%" style="stop-color:#26a69a"/>
-        </linearGradient>
-
-        <!-- Building gradient -->
-        <linearGradient id="building-grad" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" style="stop-color:#37474f"/>
-          <stop offset="100%" style="stop-color:#263238"/>
-        </linearGradient>
-
-        <!-- Electricity bolt -->
-        <linearGradient id="electric" x1="0%" y1="0%" x2="0%" y2="100%">
-          <stop offset="0%" style="stop-color:#ffeb3b"/>
-          <stop offset="100%" style="stop-color:#ff9800"/>
-        </linearGradient>
-
-        <!-- Animated dash pattern -->
-        <pattern id="flow-pattern-hot" width="20" height="6" patternUnits="userSpaceOnUse">
-          <rect width="12" height="6" fill="#ff6b35" rx="3"/>
-        </pattern>
-
-        <pattern id="flow-pattern-cool" width="20" height="6" patternUnits="userSpaceOnUse">
-          <rect width="12" height="6" fill="#4fc3f7" rx="3"/>
-        </pattern>
+        <linearGradient id="gHot" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#ff6b35"/><stop offset="100%" stopColor="#ee3333"/></linearGradient>
+        <linearGradient id="gCool" x1="0%" y1="0%" x2="100%" y2="0%"><stop offset="0%" stopColor="#4fc3f7"/><stop offset="100%" stopColor="#2266dd"/></linearGradient>
+        <linearGradient id="gElec"><stop offset="0%" stopColor="#ffeb3b"/><stop offset="100%" stopColor="#ff9800"/></linearGradient>
+        <linearGradient id="gBldg" x1="0%" y1="0%" x2="0%" y2="100%"><stop offset="0%" stopColor="#4a6572"/><stop offset="100%" stopColor="#37474f"/></linearGradient>
       </defs>
 
-      <!-- ==================== STAGE 1: FACTORY OVERVIEW ==================== -->
-      <g id="factory-group">
-        <!-- Ground / environment -->
-        <rect id="ground" x="0" y="520" width="1200" height="180" fill="#1a2a3a" rx="0"/>
+      {/* Ground */}
+      <rect x="0" y="360" width={W} height="120" fill="#1e3244" rx="0"/>
 
-        <!-- River/water body on the right -->
-        <g id="river">
-          <path d="M 950 520 Q 1000 500, 1050 520 Q 1100 540, 1150 520 L 1200 520 L 1200 700 L 950 700 Z"
-                fill="#1565c0" opacity="0.4"/>
-          <text x="1075" y="580" text-anchor="middle" class="label-text" opacity="0.7">River</text>
-        </g>
-
-        <!-- Main factory building -->
-        <g id="factory-building">
-          <rect x="100" y="260" width="350" height="260" fill="url(#building-grad)" rx="4" stroke="#546e7a" stroke-width="1"/>
-          <!-- Roof -->
-          <polygon points="90,260 275,190 460,260" fill="#455a64" stroke="#546e7a" stroke-width="1"/>
-          <!-- Windows -->
-          <rect x="130" y="300" width="50" height="40" fill="#1a237e" opacity="0.6" rx="2"/>
-          <rect x="200" y="300" width="50" height="40" fill="#1a237e" opacity="0.6" rx="2"/>
-          <rect x="270" y="300" width="50" height="40" fill="#1a237e" opacity="0.6" rx="2"/>
-          <rect x="340" y="300" width="50" height="40" fill="#1a237e" opacity="0.6" rx="2"/>
-          <!-- Light in windows -->
-          <rect x="132" y="302" width="46" height="36" fill="#ffcc02" opacity="0.15" rx="1"/>
-          <rect x="202" y="302" width="46" height="36" fill="#ffcc02" opacity="0.15" rx="1"/>
-          <rect x="272" y="302" width="46" height="36" fill="#ffcc02" opacity="0.15" rx="1"/>
-          <rect x="342" y="302" width="46" height="36" fill="#ffcc02" opacity="0.15" rx="1"/>
-          <!-- Door -->
-          <rect x="220" y="430" width="60" height="90" fill="#1a237e" opacity="0.5" rx="2"/>
-          <!-- Smokestacks -->
-          <rect x="160" y="180" width="25" height="80" fill="#455a64" rx="2"/>
-          <rect x="330" y="200" width="25" height="60" fill="#455a64" rx="2"/>
-          <!-- Steam from stacks -->
-          <g id="steam1" opacity="0.3">
-            <circle cx="172" cy="170" r="8" fill="#90a4ae"/>
-            <circle cx="168" cy="155" r="10" fill="#90a4ae"/>
-            <circle cx="175" cy="138" r="7" fill="#90a4ae"/>
-          </g>
-          <g id="steam2" opacity="0.2">
-            <circle cx="342" cy="190" r="6" fill="#90a4ae"/>
-            <circle cx="338" cy="178" r="8" fill="#90a4ae"/>
-          </g>
-          <!-- Label -->
-          <text x="275" y="390" text-anchor="middle" class="component-label" font-size="14">Food Canning</text>
-          <text x="275" y="408" text-anchor="middle" class="component-label" font-size="14">Plant</text>
-        </g>
-
-        <!-- Hot water outflow pipe (from factory) -->
-        <g id="hot-outflow" opacity="0">
-          <!-- Pipe -->
-          <line x1="450" y1="470" x2="620" y2="470" stroke="#546e7a" stroke-width="14" stroke-linecap="round"/>
-          <line x1="450" y1="470" x2="620" y2="470" stroke="url(#hot-water)" stroke-width="8" stroke-linecap="round"
-                stroke-dasharray="12 8" class="hot-flow"/>
-          <!-- Temperature label -->
-          <rect x="490" y="438" width="70" height="22" fill="rgba(255,107,53,0.2)" rx="11" stroke="#ff6b35" stroke-width="1"/>
-          <text x="525" y="453" text-anchor="middle" class="temp-label" fill="#ff6b35" font-size="12">85°C</text>
-          <text x="535" y="495" text-anchor="middle" class="label-text">Hot Water Outflow</text>
-        </g>
-
-        <!-- Wavy arrow going to river (original, no ORC) -->
-        <g id="direct-to-river" opacity="0">
-          <path d="M 620 470 Q 700 460, 750 470 Q 800 480, 850 470 Q 900 460, 940 470"
-                stroke="#ff6b35" stroke-width="4" fill="none" stroke-dasharray="8 4" class="hot-flow-river"/>
-          <polygon points="940,462 955,470 940,478" fill="#ff6b35"/>
-          <text x="780" y="450" text-anchor="middle" class="label-text" fill="#ff8a65">Hot water flows directly to river!</text>
-          <text x="780" y="430" text-anchor="middle" font-size="13" fill="#ff5252" font-weight="600">Thermal Pollution</text>
-        </g>
+      {/* Factory — always visible in stages 0-3 */}
+      <g>
+        <rect x="60" y="180" width="260" height="180" fill="url(#gBldg)" rx="4" stroke="#607d8b" strokeWidth="1"/>
+        <polygon points="50,180 190,120 330,180" fill="#546e7a" stroke="#607d8b" strokeWidth="1"/>
+        {[0,1,2,3].map(i=><rect key={i} x={85+i*55} y="215" width="35" height="28" fill="#1a237e" opacity="0.5" rx="2"/>)}
+        {[0,1,2,3].map(i=><rect key={`w${i}`} x={87+i*55} y="217" width="31" height="24" fill="#ffcc02" opacity="0.12" rx="1"/>)}
+        <rect x="160" y="300" width="45" height="60" fill="#1a237e" opacity="0.4" rx="2"/>
+        <rect x="110" y="110" width="18" height="70" fill="#546e7a" rx="2"/>
+        <rect x="240" y="130" width="18" height="50" fill="#546e7a" rx="2"/>
+        <circle cx="119" cy="102" r="6" fill="#90a4ae" opacity="0.3"/>
+        <circle cx="116" cy="90" r="8" fill="#90a4ae" opacity="0.25"/>
+        <circle cx="249" cy="124" r="5" fill="#90a4ae" opacity="0.2"/>
+        <text x="190" y="275" textAnchor="middle" fill="#64b5f6" fontSize="13" fontWeight="600">Food Canning</text>
+        <text x="190" y="292" textAnchor="middle" fill="#64b5f6" fontSize="13" fontWeight="600">Plant</text>
       </g>
 
-      <!-- ==================== STAGE 2: ORC SYSTEM (exterior box) ==================== -->
-      <g id="orc-exterior" opacity="0">
-        <!-- ORC Unit box -->
-        <rect id="orc-box" x="600" y="340" width="220" height="160" fill="#1a3a4a" rx="8"
-              stroke="#4fc3f7" stroke-width="2"/>
-        <rect x="600" y="340" width="220" height="30" fill="rgba(79,195,247,0.1)" rx="8"/>
-        <text x="710" y="362" text-anchor="middle" fill="#4fc3f7" font-size="14" font-weight="600">ORC Unit</text>
+      {/* Stage 0: just the factory */}
 
-        <!-- Blinking status light -->
-        <circle id="status-light" cx="800" cy="355" r="5" fill="#4caf50"/>
+      {/* Stage 1: hot water to river */}
+      {stage === 1 && <>
+        {/* Hot water pipe from factory */}
+        <line x1="320" y1="320" x2="500" y2="320" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="320" y1="320" x2="500" y2="320" stroke="url(#gHot)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="370" y="293" width="60" height="20" fill="rgba(255,107,53,0.2)" rx="10" stroke="#ff6b35" strokeWidth="1"/>
+        <text x="400" y="307" textAnchor="middle" fill="#ff6b35" fontSize="11" fontWeight="600">85°C</text>
+      </>}
 
-        <!-- Hot water pipe INTO orc -->
-        <line x1="450" y1="470" x2="600" y2="420" stroke="#546e7a" stroke-width="14" stroke-linecap="round"/>
-        <line id="pipe-hot-in" x1="450" y1="470" x2="600" y2="420" stroke="url(#hot-water)" stroke-width="8"
-              stroke-linecap="round" stroke-dasharray="12 8"/>
-        <rect x="490" y="418" width="70" height="22" fill="rgba(255,107,53,0.2)" rx="11" stroke="#ff6b35" stroke-width="1"/>
-        <text x="525" y="433" text-anchor="middle" class="temp-label" fill="#ff6b35" font-size="12">85°C</text>
+      {stage === 1 && <>
+        {/* Arrow to river */}
+        <path d="M 500 320 Q 570 310, 620 320 Q 670 330, 720 320 Q 760 312, 790 320" stroke="#ff6b35" strokeWidth="3.5" fill="none" strokeDasharray="7 4"/>
+        <polygon points="788,313 800,320 788,327" fill="#ff6b35"/>
+        {/* River */}
+        <path d="M 780 360 Q 820 340, 860 360 L 900 360 L 900 480 L 780 480 Z" fill="#1565c0" opacity="0.35"/>
+        <text x="845" y="400" textAnchor="middle" fill="#90caf9" fontSize="11" opacity="0.7">River</text>
+        {/* Warning */}
+        <text x="650" y="298" textAnchor="middle" fill="#ff5252" fontSize="13" fontWeight="700">⚠ Thermal Pollution</text>
+        <text x="650" y="345" textAnchor="middle" fill="#ff8a65" fontSize="11">Hot water harms aquatic life!</text>
+      </>}
 
-        <!-- Cool water pipe OUT of orc to river -->
-        <line x1="820" y1="450" x2="950" y2="500" stroke="#546e7a" stroke-width="14" stroke-linecap="round"/>
-        <line id="pipe-cool-out" x1="820" y1="450" x2="950" y2="500" stroke="url(#cool-water)" stroke-width="8"
-              stroke-linecap="round" stroke-dasharray="12 8"/>
-        <rect x="860" y="445" width="70" height="22" fill="rgba(79,195,247,0.2)" rx="11" stroke="#4fc3f7" stroke-width="1"/>
-        <text x="895" y="460" text-anchor="middle" class="temp-label" fill="#4fc3f7" font-size="12">35°C</text>
+      {/* Stage 2: ORC box installed */}
+      {stage >= 2 && <>
+        {/* ORC Box */}
+        <rect x="480" y="220" width="190" height="130" fill="#1a3a4a" rx="8" stroke="#4fc3f7" strokeWidth="2"/>
+        <rect x="480" y="220" width="190" height="26" fill="rgba(79,195,247,0.1)" rx="8"/>
+        <text x="575" y="239" textAnchor="middle" fill="#4fc3f7" fontSize="13" fontWeight="700">ORC Unit</text>
+        <circle cx="652" cy="233" r="4" fill="#4caf50"/>
 
-        <!-- "Safe for river" label -->
-        <text x="920" y="530" text-anchor="middle" class="label-text" fill="#66bb6a">Cooled water safe for river</text>
-      </g>
+        {/* Hot water pipe into ORC */}
+        <line x1="320" y1="320" x2="480" y2="270" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="320" y1="320" x2="480" y2="270" stroke="url(#gHot)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="360" y="265" width="60" height="20" fill="rgba(255,107,53,0.2)" rx="10" stroke="#ff6b35" strokeWidth="1"/>
+        <text x="390" y="279" textAnchor="middle" fill="#ff6b35" fontSize="11" fontWeight="600">85°C</text>
 
-      <!-- ==================== STAGE 3: ELECTRICITY OUTPUT ==================== -->
-      <g id="electricity-group" opacity="0">
-        <!-- Power line from ORC -->
-        <line x1="710" y1="340" x2="710" y2="240" stroke="#ffeb3b" stroke-width="3" stroke-dasharray="6 4"/>
-        <line x1="710" y1="240" x2="880" y2="240" stroke="#ffeb3b" stroke-width="3" stroke-dasharray="6 4"/>
+        {/* Cool water pipe BACK TO FACTORY */}
+        <line x1="480" y1="320" x2="320" y2="350" stroke="#546e7a" strokeWidth="12" strokeLinecap="round"/>
+        <line x1="480" y1="320" x2="320" y2="350" stroke="url(#gCool)" strokeWidth="7" strokeLinecap="round" strokeDasharray="10 7"/>
+        <rect x="360" y="332" width="60" height="20" fill="rgba(79,195,247,0.2)" rx="10" stroke="#4fc3f7" strokeWidth="1"/>
+        <text x="390" y="346" textAnchor="middle" fill="#4fc3f7" fontSize="11" fontWeight="600">35°C</text>
+        <text x="340" y="388" textAnchor="middle" fill="#66bb6a" fontSize="11">↩ Cooled water returns to plant</text>
+      </>}
 
-        <!-- Lightning bolt icon -->
-        <g id="bolt" transform="translate(870, 200)">
-          <polygon points="10,0 0,22 12,22 5,42 25,16 14,16 22,0" fill="url(#electric)" class="glow"/>
-        </g>
-
-        <!-- Power meter / display -->
-        <rect x="850" y="200" width="120" height="60" fill="#1a2a1a" rx="8" stroke="#66bb6a" stroke-width="1.5"/>
-        <text x="910" y="225" text-anchor="middle" fill="#66bb6a" font-size="10" font-weight="600">POWER OUTPUT</text>
-        <text id="power-value" x="910" y="248" text-anchor="middle" fill="#76ff03" font-size="20" font-weight="700">0 kW</text>
-
-        <!-- Grid / houses icon -->
-        <g transform="translate(900, 270)">
-          <text x="10" y="15" font-size="11" fill="#b0c4de" text-anchor="middle">Powers nearby buildings</text>
-        </g>
-      </g>
-
-      <!-- ==================== STAGE 4: EXPLODED ORC VIEW ==================== -->
-      <g id="orc-exploded" opacity="0">
-        <!-- Background panel -->
-        <rect x="100" y="80" width="1000" height="560" fill="rgba(15,25,45,0.95)" rx="16"
-              stroke="rgba(100,180,255,0.2)" stroke-width="1"/>
-
-        <text x="600" y="120" text-anchor="middle" fill="#64b5f6" font-size="20" font-weight="700">
-          Inside the ORC System
-        </text>
-        <text x="600" y="142" text-anchor="middle" fill="#7a9cc6" font-size="13">
-          How an Organic Rankine Cycle converts waste heat into electricity
-        </text>
-
-        <!-- EVAPORATOR -->
-        <g id="comp-evaporator">
-          <rect x="160" y="250" width="160" height="100" fill="#2a1a0a" rx="10" stroke="#ff9800" stroke-width="2"/>
-          <text x="240" y="230" text-anchor="middle" class="component-label" fill="#ff9800" font-size="14">EVAPORATOR</text>
-          <text x="240" y="290" text-anchor="middle" fill="#ffcc80" font-size="11">Hot water heats</text>
-          <text x="240" y="306" text-anchor="middle" fill="#ffcc80" font-size="11">the working fluid</text>
-          <text x="240" y="325" text-anchor="middle" fill="#ffcc80" font-size="11">into a vapor</text>
-          <!-- Hot water in arrow -->
-          <line x1="120" y1="280" x2="158" y2="280" stroke="#ff6b35" stroke-width="4" marker-end="url(#arrow-hot)"/>
-          <text x="110" y="268" text-anchor="end" fill="#ff6b35" font-size="10" font-weight="600">Hot Water In</text>
-          <text x="110" y="292" text-anchor="end" fill="#ff8a65" font-size="10">85°C</text>
-          <!-- Cooled water out -->
-          <line x1="120" y1="320" x2="158" y2="320" stroke="#4fc3f7" stroke-width="4"/>
-          <text x="110" y="316" text-anchor="end" fill="#4fc3f7" font-size="10" font-weight="600">Cool Water Out</text>
-          <text x="110" y="336" text-anchor="end" fill="#81d4fa" font-size="10">35°C</text>
-        </g>
-
-        <!-- Arrow: Evaporator -> Turbine (vapor) -->
-        <g id="flow-evap-turb">
-          <line x1="322" y1="285" x2="410" y2="285" stroke="#ff9800" stroke-width="4"
-                stroke-dasharray="8 4"/>
-          <polygon points="408,278 422,285 408,292" fill="#ff9800"/>
-          <text x="366" y="275" text-anchor="middle" fill="#ffcc80" font-size="10">Hot Vapor</text>
-        </g>
-
-        <!-- TURBINE -->
-        <g id="comp-turbine">
-          <circle cx="490" cy="285" r="55" fill="#1a2a3a" stroke="#42a5f5" stroke-width="2"/>
-          <!-- Turbine blades -->
-          <g transform="translate(490, 285)">
-            <line x1="0" y1="-40" x2="0" y2="40" stroke="#42a5f5" stroke-width="2"/>
-            <line x1="-35" y1="-20" x2="35" y2="20" stroke="#42a5f5" stroke-width="2"/>
-            <line x1="-35" y1="20" x2="35" y2="-20" stroke="#42a5f5" stroke-width="2"/>
-            <circle cx="0" cy="0" r="8" fill="#42a5f5" opacity="0.3"/>
-          </g>
-          <text x="490" y="226" text-anchor="middle" class="component-label" fill="#42a5f5" font-size="14">TURBINE</text>
-          <text x="490" y="360" text-anchor="middle" fill="#90caf9" font-size="11">Vapor spins</text>
-          <text x="490" y="376" text-anchor="middle" fill="#90caf9" font-size="11">the turbine</text>
-        </g>
-
-        <!-- Arrow: Turbine -> Generator (shaft) -->
-        <g id="flow-turb-gen">
-          <line x1="547" y1="285" x2="610" y2="285" stroke="#42a5f5" stroke-width="4"/>
-          <rect x="565" y="278" width="30" height="14" fill="none" stroke="#42a5f5" stroke-width="1.5" rx="3"/>
-          <text x="580" y="272" text-anchor="middle" fill="#90caf9" font-size="9">Shaft</text>
-        </g>
-
-        <!-- GENERATOR -->
-        <g id="comp-generator">
-          <rect x="614" y="250" width="120" height="70" fill="#1a2a1a" rx="10" stroke="#66bb6a" stroke-width="2"/>
-          <text x="674" y="230" text-anchor="middle" class="component-label" fill="#66bb6a" font-size="14">GENERATOR</text>
-          <text x="674" y="280" text-anchor="middle" fill="#a5d6a7" font-size="11">Spinning turbine</text>
-          <text x="674" y="296" text-anchor="middle" fill="#a5d6a7" font-size="11">makes electricity!</text>
-          <!-- Lightning bolts -->
-          <g transform="translate(700, 322)">
-            <polygon points="5,0 0,11 6,11 2,22 14,8 8,8 12,0" fill="#ffeb3b" class="glow"/>
-          </g>
-          <text x="674" y="358" text-anchor="middle" fill="#76ff03" font-size="13" font-weight="700" id="exploded-power">Electricity Output</text>
-        </g>
-
-        <!-- Arrow: Turbine -> Condenser (used vapor) -->
-        <g id="flow-turb-cond">
-          <path d="M 490 342 L 490 450 L 674 450" fill="none" stroke="#26a69a" stroke-width="4"
-                stroke-dasharray="8 4"/>
-          <polygon points="672,443 686,450 672,457" fill="#26a69a"/>
-          <text x="560" y="440" text-anchor="middle" fill="#80cbc4" font-size="10">Cooled Vapor</text>
-        </g>
-
-        <!-- CONDENSER -->
-        <g id="comp-condenser">
-          <rect x="690" y="420" width="160" height="80" fill="#0a2a2a" rx="10" stroke="#26a69a" stroke-width="2"/>
-          <text x="770" y="410" text-anchor="middle" class="component-label" fill="#26a69a" font-size="14">CONDENSER</text>
-          <text x="770" y="450" text-anchor="middle" fill="#80cbc4" font-size="11">Cools the vapor</text>
-          <text x="770" y="466" text-anchor="middle" fill="#80cbc4" font-size="11">back into liquid</text>
-          <text x="770" y="490" text-anchor="middle" fill="#80cbc4" font-size="10">(using air or cool water)</text>
-        </g>
-
-        <!-- Arrow: Condenser -> Pump -->
-        <g id="flow-cond-pump">
-          <line x1="852" y1="460" x2="920" y2="460" stroke="#66bb6a" stroke-width="4"
-                stroke-dasharray="8 4"/>
-          <polygon points="918,453 932,460 918,467" fill="#66bb6a"/>
-          <text x="886" y="448" text-anchor="middle" fill="#a5d6a7" font-size="10">Liquid</text>
-        </g>
-
-        <!-- PUMP -->
-        <g id="comp-pump">
-          <circle cx="980" cy="460" r="40" fill="#1a1a2a" stroke="#7e57c2" stroke-width="2"/>
-          <text x="980" y="415" text-anchor="middle" class="component-label" fill="#7e57c2" font-size="14">PUMP</text>
-          <text x="980" y="458" text-anchor="middle" fill="#b39ddb" font-size="11">Pushes liquid</text>
-          <text x="980" y="474" text-anchor="middle" fill="#b39ddb" font-size="11">back to start</text>
-          <!-- Circular arrow inside -->
-          <path d="M 970 445 A 12 12 0 1 1 990 445" fill="none" stroke="#7e57c2" stroke-width="2"/>
-          <polygon points="990,443 994,449 987,449" fill="#7e57c2"/>
-        </g>
-
-        <!-- Arrow: Pump -> Evaporator (completing the loop) -->
-        <g id="flow-pump-evap">
-          <path d="M 980 502 L 980 560 L 240 560 L 240 352" fill="none" stroke="#7e57c2" stroke-width="4"
-                stroke-dasharray="8 4"/>
-          <polygon points="233,354 240,340 247,354" fill="#7e57c2"/>
-          <text x="600" y="552" text-anchor="middle" fill="#b39ddb" font-size="11">Liquid flows back to evaporator — the cycle repeats!</text>
-        </g>
-
-        <!-- Cycle label in center -->
-        <g id="cycle-label" opacity="0.6">
-          <text x="600" y="170" text-anchor="middle" fill="#546e7a" font-size="11">
-            The "organic" in ORC refers to the working fluid — an organic compound (like refrigerant) that boils at a lower temperature than water
-          </text>
-        </g>
-      </g>
-
-      <!-- Arrowhead markers -->
-      <defs>
-        <marker id="arrow-hot" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#ff6b35"/>
-        </marker>
-      </defs>
+      {/* Stage 3: Electricity output */}
+      {stage >= 3 && <>
+        <line x1="575" y1="220" x2="575" y2="165" stroke="#ffeb3b" strokeWidth="2.5" strokeDasharray="5 3"/>
+        <line x1="575" y1="165" x2="740" y2="165" stroke="#ffeb3b" strokeWidth="2.5" strokeDasharray="5 3"/>
+        <polygon points="8,0 0,18 10,18 4,35 22,13 12,13 18,0" fill="url(#gElec)" transform="translate(732,148)"/>
+        <rect x="720" y="140" width="110" height="50" fill="#1a2a1a" rx="8" stroke="#66bb6a" strokeWidth="1.5"/>
+        <text x="775" y="160" textAnchor="middle" fill="#66bb6a" fontSize="10" fontWeight="600">POWER OUTPUT</text>
+        <text x="775" y="180" textAnchor="middle" fill="#76ff03" fontSize="18" fontWeight="700">150 kW</text>
+        <text x="775" y="205" textAnchor="middle" fill="#b0c4de" fontSize="10">Powers parts of the plant!</text>
+      </>}
     </svg>
+  );
+}
 
-    <!-- Info Panel -->
-    <div id="info-panel">
-      <h2 id="info-title">Welcome</h2>
-      <p id="info-text">Click "Next" to explore how an ORC system reduces thermal pollution from a food canning plant.</p>
+/* ═══════════════════════════════════════════
+   MAIN COMPONENT
+   ═══════════════════════════════════════════ */
+
+function ORCSystem() {
+  const mountRef = useRef(null);
+  const sceneRef = useRef({});
+  const [stage, setStage] = useState(0);
+  const [explode, setExplode] = useState(0);
+  const [isRotating, setIsRotating] = useState(true);
+  const frameRef = useRef(null);
+  const isDragging = useRef(false);
+  const lastMouse = useRef({ x:0, y:0 });
+  const camAngle = useRef({ theta:0.5, phi:0.92, radius:9 });
+  const threeReady = useRef(false);
+
+  const is3D = stage === 4;
+
+  /* ─── THREE.JS INIT ─── */
+  const initScene = useCallback((container) => {
+    if (!container || sceneRef.current.renderer) return;
+    const w = container.clientWidth, h = container.clientHeight;
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xf0f2f5);
+    scene.fog = new THREE.FogExp2(0xf0f2f5, 0.012);
+    const camera = new THREE.PerspectiveCamera(45, w/h, 0.1, 200);
+    const renderer = new THREE.WebGLRenderer({ antialias:true });
+    renderer.setSize(w,h); renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+    renderer.shadowMap.enabled=true; renderer.toneMapping=THREE.ACESFilmicToneMapping; renderer.toneMappingExposure=1.2;
+    container.appendChild(renderer.domElement);
+    scene.add(new THREE.AmbientLight(0x889aaa,1.0));
+    const key=new THREE.DirectionalLight(0xfff8ee,1.4);key.position.set(6,10,5);key.castShadow=true;scene.add(key);
+    const rim=new THREE.DirectionalLight(0x6688cc,0.4);rim.position.set(-5,3,-4);scene.add(rim);
+    const fill=new THREE.PointLight(0xffa866,0.3,15);fill.position.set(2,1,2);scene.add(fill);
+    const grid=new THREE.GridHelper(16,24,0xc8ccd2,0xdde0e6);grid.position.y=-2.5;scene.add(grid);
+    const P={hx:new THREE.Vector3(-1.5,0,0),turb:new THREE.Vector3(0.2,0.5,-1.3),gen:new THREE.Vector3(0.2,-1.1,-1.3),cond:new THREE.Vector3(1.8,0,0),pump:new THREE.Vector3(0.2,-0.1,1.3)};
+    const D={hx:new THREE.Vector3(-1,0,0),turb:new THREE.Vector3(0,0.4,-1),gen:new THREE.Vector3(0,-0.6,-1),cond:new THREE.Vector3(1,0,0),pump:new THREE.Vector3(0,0,1)};
+    const pR=0.045;
+    const hx=buildHX();hx.position.copy(P.hx);const sR=hx.userData.sR;
+    const hotCoil=hx.userData.hotCoil, orcCoil=hx.userData.orcCoil;
+    hotCoil.add(mkPipe([new THREE.Vector3(-sR-2.0,-0.8,0),new THREE.Vector3(-0.1,-0.8,0),new THREE.Vector3(0.5,-0.8,0)],0xee2222,0.055));
+    const hwInL=lbl("HOT WATER IN","#cc2222",44);hwInL.position.set(-sR-2.6,-0.8,0);hwInL.scale.set(0.6,0.6,1);hotCoil.add(hwInL);
+    hotCoil.add(mkPipe([new THREE.Vector3(-sR-2.0,0.8,0),new THREE.Vector3(-0.1,0.8,0),new THREE.Vector3(0.5,0.8,0)],0x2266dd,0.055));
+    const hwOutL=lbl("HOT WATER OUT","#1a55bb",44);hwOutL.position.set(-sR-2.7,0.8,0);hwOutL.scale.set(0.6,0.6,1);hotCoil.add(hwOutL);
+    const turbIntake=new THREE.Vector3(P.turb.x,P.turb.y+0.9,P.turb.z);
+    orcCoil.add(mkPipe([new THREE.Vector3(-0.5,0.8,0),new THREE.Vector3(0.2,0.8,0),new THREE.Vector3(sR+0.3,0.6,0),toL(P.hx,new THREE.Vector3(turbIntake.x,turbIntake.y,turbIntake.z+0.15)),toL(P.hx,turbIntake)],0xee2222,pR));
+    const pumpSide=new THREE.Vector3(P.pump.x-0.35,P.pump.y,P.pump.z);
+    orcCoil.add(mkPipe([new THREE.Vector3(-0.5,-0.8,0),new THREE.Vector3(0.2,-0.8,0),new THREE.Vector3(sR+0.3,-0.6,0),toL(P.hx,new THREE.Vector3(pumpSide.x,pumpSide.y,pumpSide.z-0.15)),toL(P.hx,pumpSide)],0x2266dd,pR));
+    scene.add(hx);
+    const turbine=buildTurbine();turbine.position.copy(P.turb);
+    const condLeft=new THREE.Vector3(P.cond.x-0.5,P.cond.y,P.cond.z);
+    turbine.add(gradTube([new THREE.Vector3(0.6,-0.1,0),new THREE.Vector3(0.85,-0.1,0),toL(P.turb,new THREE.Vector3(condLeft.x,condLeft.y,condLeft.z-0.3)),toL(P.turb,condLeft)],0xcc3333,0x3366bb,pR));
+    scene.add(turbine);
+    const generator=buildGenerator();generator.position.copy(P.gen);
+    generator.add(mkPipe([new THREE.Vector3(0,0,-0.42),new THREE.Vector3(0,0,-1.6)],0xccaa22,0.03));
+    const elecL=lbl("⚡ ELECTRICITY OUT","#997700",44);elecL.position.set(0,0.35,-2.0);elecL.scale.set(0.6,0.6,1);generator.add(elecL);
+    scene.add(generator);
+    const condenser=buildCondenser();condenser.position.copy(P.cond);
+    const pumpTop=new THREE.Vector3(P.pump.x,P.pump.y+0.55,P.pump.z);
+    condenser.add(mkPipe([new THREE.Vector3(0,-0.4,0),new THREE.Vector3(0,-0.6,0),toL(P.cond,new THREE.Vector3(pumpTop.x+0.15,pumpTop.y,pumpTop.z)),toL(P.cond,pumpTop)],0x2266dd,pR));
+    scene.add(condenser);
+    const pump=buildPump();pump.position.copy(P.pump);scene.add(pump);
+    const boxW=5.5,boxH=3.6,boxD=4.2;
+    const enclosure=buildEnclosure(boxW,boxH,boxD);enclosure.position.set(0,-0.1,-0.1);scene.add(enclosure);
+    const sysLabel=lbl("ORC  (ORGANIC RANKINE CYCLE)","#2a3344",46);sysLabel.position.set(0,0.8,boxD/2+0.02-0.1);scene.add(sysLabel);
+    const components=[{obj:hx,home:P.hx.clone(),dir:D.hx},{obj:turbine,home:P.turb.clone(),dir:D.turb},{obj:generator,home:P.gen.clone(),dir:D.gen},{obj:condenser,home:P.cond.clone(),dir:D.cond},{obj:pump,home:P.pump.clone(),dir:D.pump}];
+    sceneRef.current={scene,camera,renderer,fill,hx,turbine,condenser,pump,components,enclosure,sysLabel};
+    threeReady.current = true;
+  }, []);
+
+  /* ─── EXPLODE EFFECT ─── */
+  useEffect(() => {
+    const s = sceneRef.current; if(!s.hx) return;
+    const boxOpacity=Math.max(0,1-explode*20);
+    s.enclosure.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.isMesh)ch.material.opacity=0.92*boxOpacity;if(ch.isLineSegments)ch.material.opacity=0.7*Math.max(boxOpacity,0.12);ch.visible=ch.isLineSegments?(boxOpacity>0||explode<0.95):boxOpacity>0.01;}});
+    s.sysLabel.material.opacity=Math.max(0.3,boxOpacity);
+    const ex=Math.max(0,(explode-0.15)/0.85),spread=ex*2.5;
+    s.components.forEach(({obj,home,dir})=>{obj.position.set(home.x+dir.x*spread,home.y+dir.y*spread,home.z+dir.z*spread);});
+    const shellOp=Math.max(0,1-ex*2.8);
+    const shell=s.hx.userData.shell;
+    if(shell)shell.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*shellOp;ch.visible=shellOp>0.01;}});
+    const coilSpread=Math.max(0,ex-0.3)*3.5;
+    if(s.hx.userData.hotCoil){s.hx.userData.hotCoil.position.z=coilSpread;s.hx.userData.orcCoil.position.z=-coilSpread;const v=coilSpread>0.1;s.hx.userData.hotCoilLabel.visible=v;s.hx.userData.orcCoilLabel.visible=v;if(v){s.hx.userData.hotCoilLabel.material.opacity=Math.min(1,(coilSpread-0.1)*3);s.hx.userData.orcCoilLabel.material.opacity=Math.min(1,(coilSpread-0.1)*3);}}
+    if(s.turbine&&s.turbine.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.turbine.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const ss=Math.max(0,ex-0.25)*2.8,stages=s.turbine.userData.stages,bH=s.turbine.userData.bodyH;if(stages)for(let i=0;i<stages.length;i++){const baseY=-bH*0.38+i*(bH*0.76/(stages.length-1));stages[i].position.y=baseY+(i-(stages.length-1)/2)*ss*0.4;if(stages[i].userData.stageLabel){stages[i].userData.stageLabel.visible=ss>0.2;if(ss>0.2)stages[i].userData.stageLabel.material.opacity=Math.min(1,(ss-0.2)*3);}}}
+    if(s.condenser&&s.condenser.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.condenser.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const bs=Math.max(0,ex-0.25)*2.5,baffles=s.condenser.userData.baffles;if(baffles)for(let i=0;i<baffles.length;i++){baffles[i].position.x=baffles[i].userData.homeX+(i-(baffles.length-1)/2)*bs*0.3;if(baffles[i].userData.baffleLabel){baffles[i].userData.baffleLabel.visible=bs>0.2;if(bs>0.2)baffles[i].userData.baffleLabel.material.opacity=Math.min(1,(bs-0.2)*3);}}
+      if(s.condenser.userData.tubeLbl){const st=bs>0.15;s.condenser.userData.tubeLbl.visible=st;if(st)s.condenser.userData.tubeLbl.material.opacity=Math.min(1,(bs-0.15)*3);}}
+    if(s.pump&&s.pump.userData.casing){const op=Math.max(0,1-ex*2.8),vis=op>0.01;s.pump.userData.casing.traverse(ch=>{if(ch.material){ch.material.transparent=true;if(ch.material._bo===undefined)ch.material._bo=ch.material.opacity??1;ch.material.opacity=ch.material._bo*op;ch.visible=vis;}});
+      const ml2=Math.max(0,ex-0.3)*2.0;if(s.pump.userData.motorGroup){s.pump.userData.motorGroup.position.y=s.pump.userData.bodyH/2+0.2+ml2;if(s.pump.userData.motorLbl){s.pump.userData.motorLbl.visible=ml2>0.1;if(ml2>0.1)s.pump.userData.motorLbl.material.opacity=Math.min(1,(ml2-0.1)*3);}}
+      const id=Math.max(0,ex-0.35)*1.0;if(s.pump.userData.impeller){s.pump.userData.impeller.position.y=-id;const il2=s.pump.userData.impeller.userData.impLbl;if(il2){il2.visible=id>0.05;if(id>0.05)il2.material.opacity=Math.min(1,(id-0.05)*4);}}}
+  }, [explode]);
+
+  /* ─── RENDER LOOP ─── */
+  useEffect(() => {
+    const s = sceneRef.current; if(!s.renderer) return;
+    let t = 0;
+    const animate = () => {
+      frameRef.current = requestAnimationFrame(animate); t += 0.003;
+      if(isRotating) camAngle.current.theta += 0.002;
+      const{theta,phi,radius}=camAngle.current;
+      s.camera.position.set(radius*Math.sin(phi)*Math.cos(theta),radius*Math.cos(phi),radius*Math.sin(phi)*Math.sin(theta));
+      s.camera.lookAt(0,-0.2,0);
+      if(s.fill) s.fill.intensity=0.3+Math.sin(t*4)*0.04;
+      if(s.turbine&&s.turbine.userData.stages)s.turbine.userData.stages.forEach((st,i)=>{if(i%2===0)st.rotation.y=t*8;});
+      if(s.pump&&s.pump.userData.impeller)s.pump.userData.impeller.rotation.y=t*10;
+      s.renderer.render(s.scene,s.camera);
+    };
+    animate();
+    return ()=>{if(frameRef.current)cancelAnimationFrame(frameRef.current);};
+  }, [isRotating]);
+
+  /* ─── ORBIT CONTROLS ─── */
+  useEffect(() => {
+    const el=mountRef.current;if(!el) return;
+    const onDown=e=>{isDragging.current=true;const cx=e.touches?e.touches[0].clientX:e.clientX;const cy=e.touches?e.touches[0].clientY:e.clientY;lastMouse.current={x:cx,y:cy};setIsRotating(false);};
+    const onMove=e=>{if(!isDragging.current)return;const cx=e.touches?e.touches[0].clientX:e.clientX;const cy=e.touches?e.touches[0].clientY:e.clientY;camAngle.current.theta-=(cx-lastMouse.current.x)*0.005;camAngle.current.phi=Math.max(0.3,Math.min(2.8,camAngle.current.phi-(cy-lastMouse.current.y)*0.005));lastMouse.current={x:cx,y:cy};};
+    const onUp=()=>{isDragging.current=false;};
+    el.addEventListener("mousedown",onDown);el.addEventListener("mousemove",onMove);el.addEventListener("mouseup",onUp);el.addEventListener("mouseleave",onUp);
+    el.addEventListener("touchstart",onDown,{passive:true});el.addEventListener("touchmove",onMove,{passive:true});el.addEventListener("touchend",onUp);
+    return()=>{el.removeEventListener("mousedown",onDown);el.removeEventListener("mousemove",onMove);el.removeEventListener("mouseup",onUp);el.removeEventListener("mouseleave",onUp);el.removeEventListener("touchstart",onDown);el.removeEventListener("touchmove",onMove);el.removeEventListener("touchend",onUp);};
+  }, []);
+
+  useEffect(() => {
+    const onResize=()=>{const s=sceneRef.current,el=mountRef.current;if(!s.renderer||!el)return;s.camera.aspect=el.clientWidth/el.clientHeight;s.camera.updateProjectionMatrix();s.renderer.setSize(el.clientWidth,el.clientHeight);};
+    window.addEventListener("resize",onResize);return()=>window.removeEventListener("resize",onResize);
+  }, []);
+
+  const setMount = useCallback((node) => {
+    mountRef.current = node; if(node) initScene(node);
+  }, [initScene]);
+
+  const goNext = () => { if(stage < 4) setStage(stage+1); };
+  const goPrev = () => { if(stage > 0) setStage(stage-1); };
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if(e.key === "ArrowRight" || e.key === " ") { e.preventDefault(); goNext(); }
+      else if(e.key === "ArrowLeft") { e.preventDefault(); goPrev(); }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  });
+
+  const info = STAGES[stage];
+
+  /* ═══ RENDER ═══ */
+  return (
+    <div style={{
+      width:"100%", height:"100vh", background: is3D ? "#f0f2f5" : "#0e1a2e",
+      display:"flex", flexDirection:"column", fontFamily:"'Segoe UI',system-ui,sans-serif",
+      color:"#e0e8f0", overflow:"hidden", transition:"background 0.6s",
+    }}>
+      {/* ─── TOP BAR: Title + Stage dots ─── */}
+      <div style={{
+        padding:"12px 24px", display:"flex", alignItems:"center", justifyContent:"space-between",
+        borderBottom: is3D ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(100,180,255,0.15)",
+        background: is3D ? "rgba(240,242,245,0.95)" : "rgba(14,26,46,0.95)",
+        flexShrink:0, transition:"all 0.6s",
+      }}>
+        <div>
+          <div style={{ fontSize:15, fontWeight:700, color: is3D ? "#1a2233" : "#64b5f6", letterSpacing:"0.04em" }}>
+            Organic Rankine Cycle System
+          </div>
+          <div style={{ fontSize:10, opacity:0.5, color: is3D ? "#556" : "#7a9cc6", marginTop:2 }}>
+            Reducing Thermal Pollution at a Food Canning Plant
+          </div>
+        </div>
+        <div style={{ display:"flex", gap:8, alignItems:"center" }}>
+          {STAGES.map((_, i) => (
+            <div key={i} onClick={() => setStage(i)} style={{
+              width: i === stage ? 28 : 11, height:11, borderRadius:6, cursor:"pointer",
+              background: i === stage ? "#64b5f6" : i < stage ? "rgba(100,180,255,0.4)" : "rgba(100,180,255,0.15)",
+              border: `1px solid ${i === stage ? "#64b5f6" : "rgba(100,180,255,0.3)"}`,
+              boxShadow: i === stage ? "0 0 8px rgba(100,180,255,0.5)" : "none",
+              transition:"all 0.3s",
+            }} />
+          ))}
+        </div>
+      </div>
+
+      {/* ─── MAIN CONTENT ─── */}
+      <div style={{ flex:1, position:"relative", minHeight:0 }}>
+        {/* Narrative SVG overlay (stages 0-3) */}
+        {!is3D && (
+          <div style={{
+            position:"absolute", inset:0, display:"flex", alignItems:"center", justifyContent:"center",
+            zIndex:2, padding:"20px",
+          }}>
+            <NarrativeSVG stage={stage} />
+          </div>
+        )}
+
+        {/* 3D Viewport (always mounted, hidden during narrative) */}
+        <div ref={setMount} style={{
+          width:"100%", height:"100%",
+          opacity: is3D ? 1 : 0,
+          pointerEvents: is3D ? "auto" : "none",
+          cursor:"grab", transition:"opacity 0.5s",
+        }} />
+      </div>
+
+      {/* ─── BOTTOM: Info + Controls ─── */}
+      <div style={{
+        padding: is3D ? "10px 24px 14px" : "16px 24px 20px",
+        borderTop: is3D ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(100,180,255,0.15)",
+        background: is3D ? "rgba(240,242,245,0.95)" : "rgba(10,22,40,0.92)",
+        flexShrink:0, transition:"all 0.6s",
+      }}>
+        {/* Info panel */}
+        <div style={{ maxWidth:700, margin:"0 auto", textAlign:"center", marginBottom: is3D ? 8 : 14 }}>
+          <div style={{ fontSize:16, fontWeight:700, color: is3D ? "#1a2233" : "#64b5f6", marginBottom:4 }}>
+            {info.title}
+          </div>
+          <div style={{ fontSize:13, lineHeight:1.5, color: is3D ? "#556" : "#b0c4de", opacity:0.85 }}>
+            {info.text}
+          </div>
+        </div>
+
+        {/* Slider (only stage 4) */}
+        {is3D && (
+          <div style={{ display:"flex", alignItems:"center", gap:14, maxWidth:600, margin:"0 auto 8px" }}>
+            <label style={{ fontSize:10, textTransform:"uppercase", letterSpacing:"0.12em", opacity:0.5, color:"#334", whiteSpace:"nowrap" }}>Explode</label>
+            <div style={{ flex:1 }}>
+              <input type="range" min="0" max="100" value={explode*100}
+                onChange={e => setExplode(Number(e.target.value)/100)}
+                style={{ width:"100%", height:4, WebkitAppearance:"none", appearance:"none",
+                  background:`linear-gradient(90deg, #778899 0%, #cc2222 ${Math.min(explode*150,100)}%, rgba(0,0,0,0.08) ${Math.min(explode*150,100)}%)`,
+                  borderRadius:2, outline:"none", cursor:"pointer" }} />
+              <div style={{ display:"flex", justifyContent:"space-between", marginTop:3, fontSize:8, opacity:0.3, color:"#334" }}>
+                <span>ASSEMBLED</span><span>EXPLODED</span>
+              </div>
+            </div>
+            <div style={{ background:"rgba(0,0,0,0.04)", border:"1px solid rgba(0,0,0,0.1)", borderRadius:4, padding:"2px 8px", fontSize:12, color: explode<0.3?"#778899":"#cc2222", minWidth:42, textAlign:"center" }}>
+              {Math.round(explode*100)}%
+            </div>
+          </div>
+        )}
+
+        {/* Navigation */}
+        <div style={{ display:"flex", justifyContent:"center", gap:10 }}>
+          <button onClick={goPrev} disabled={stage===0} style={{
+            background: is3D ? "rgba(0,0,0,0.05)" : "rgba(100,180,255,0.12)",
+            border: `1px solid ${is3D ? "rgba(0,0,0,0.12)" : "rgba(100,180,255,0.3)"}`,
+            color: is3D ? "#556" : "#64b5f6",
+            padding:"8px 20px", borderRadius:8, fontSize:14, cursor: stage===0?"not-allowed":"pointer",
+            opacity: stage===0?0.3:1, transition:"all 0.3s", fontFamily:"inherit",
+          }}>← Back</button>
+          <button onClick={goNext} disabled={stage===4} style={{
+            background: is3D ? "rgba(0,0,0,0.05)" : "rgba(100,180,255,0.15)",
+            border: `1px solid ${is3D ? "rgba(0,0,0,0.12)" : "rgba(100,180,255,0.4)"}`,
+            color: is3D ? "#556" : "#64b5f6",
+            padding:"8px 20px", borderRadius:8, fontSize:14, cursor: stage===4?"not-allowed":"pointer",
+            opacity: stage===4?0.3:1, transition:"all 0.3s", fontFamily:"inherit",
+          }}>Next →</button>
+        </div>
+      </div>
     </div>
+  );
+}
 
-    <!-- Navigation -->
-    <div id="nav">
-      <button class="nav-btn" id="btn-prev" disabled>&#8592; Back</button>
-      <button class="nav-btn" id="btn-next">Next &#8594;</button>
-    </div>
-  </div>
-
-  <script>
-    // ======================== STATE ========================
-    let currentStage = 0;
-    const totalStages = 5; // 0-4
-
-    const stageInfo = [
-      {
-        title: "The Food Canning Plant",
-        text: "This food canning plant uses large amounts of hot water to sterilize cans and process food. The water comes out at about 85°C (185°F) — too hot to put back in the river safely."
-      },
-      {
-        title: "The Problem: Thermal Pollution",
-        text: "Without treatment, this hot water flows directly into the river. This raises the river temperature, which lowers oxygen levels and can harm fish and other aquatic life. This is called thermal pollution."
-      },
-      {
-        title: "The Solution: ORC System",
-        text: "An Organic Rankine Cycle (ORC) unit captures the heat from the hot water. The water enters at 85°C and exits at just 35°C (95°F) — cool enough for the river. The captured heat energy is converted to electricity!"
-      },
-      {
-        title: "Generating Clean Electricity",
-        text: "The ORC system generates about 150 kW of electricity from the waste heat — enough to power parts of the plant or nearby buildings. It's free energy from heat that would otherwise be wasted!"
-      },
-      {
-        title: "Inside the ORC System",
-        text: "The ORC works like a refrigerator in reverse: an organic fluid is evaporated by hot water, spins a turbine to generate electricity, gets condensed back to liquid, and is pumped back to start again. The cycle repeats continuously!"
-      }
-    ];
-
-    // ======================== INIT ========================
-    const stagesEl = document.getElementById('stages');
-    for (let i = 0; i < totalStages; i++) {
-      const dot = document.createElement('div');
-      dot.className = 'stage-dot' + (i === 0 ? ' active' : '');
-      dot.addEventListener('click', () => goToStage(i));
-      stagesEl.appendChild(dot);
-    }
-
-    // ======================== NAVIGATION ========================
-    document.getElementById('btn-next').addEventListener('click', () => {
-      if (currentStage < totalStages - 1) goToStage(currentStage + 1);
-    });
-
-    document.getElementById('btn-prev').addEventListener('click', () => {
-      if (currentStage > 0) goToStage(currentStage - 1);
-    });
-
-    function goToStage(stage) {
-      if (stage === currentStage) return;
-      const prev = currentStage;
-      currentStage = stage;
-
-      // Update dots
-      document.querySelectorAll('.stage-dot').forEach((dot, i) => {
-        dot.className = 'stage-dot' + (i === stage ? ' active' : i < stage ? ' completed' : '');
-      });
-
-      // Update buttons
-      document.getElementById('btn-prev').disabled = stage === 0;
-      document.getElementById('btn-next').disabled = stage === totalStages - 1;
-
-      // Update info
-      updateInfo(stage);
-
-      // Animate
-      animateStage(stage, prev);
-    }
-
-    function updateInfo(stage) {
-      const info = stageInfo[stage];
-      const titleEl = document.getElementById('info-title');
-      const textEl = document.getElementById('info-text');
-      gsap.to('#info-panel', {
-        opacity: 0, duration: 0.2, onComplete: () => {
-          titleEl.textContent = info.title;
-          textEl.textContent = info.text;
-          gsap.to('#info-panel', { opacity: 1, duration: 0.3 });
-        }
-      });
-    }
-
-    // ======================== ANIMATIONS ========================
-    let flowTimeline = null;
-    let powerInterval = null;
-
-    function animateStage(stage, prev) {
-      // Kill running animations
-      gsap.killTweensOf('.hot-flow, .hot-flow-river, #pipe-hot-in, #pipe-cool-out');
-      if (flowTimeline) { flowTimeline.kill(); flowTimeline = null; }
-      if (powerInterval) { clearInterval(powerInterval); powerInterval = null; }
-
-      switch (stage) {
-        case 0: showStage0(prev); break;
-        case 1: showStage1(prev); break;
-        case 2: showStage2(prev); break;
-        case 3: showStage3(prev); break;
-        case 4: showStage4(prev); break;
-      }
-    }
-
-    // Stage 0: Just the factory
-    function showStage0(prev) {
-      gsap.to('#hot-outflow', { opacity: 0, duration: 0.4 });
-      gsap.to('#direct-to-river', { opacity: 0, duration: 0.4 });
-      gsap.to('#orc-exterior', { opacity: 0, duration: 0.4 });
-      gsap.to('#electricity-group', { opacity: 0, duration: 0.4 });
-      gsap.to('#orc-exploded', { opacity: 0, duration: 0.5 });
-      gsap.to('#factory-group', { opacity: 1, duration: 0.5 });
-      animateSteam();
-    }
-
-    // Stage 1: Show hot water flowing to river (the problem)
-    function showStage1(prev) {
-      gsap.to('#orc-exterior', { opacity: 0, duration: 0.3 });
-      gsap.to('#electricity-group', { opacity: 0, duration: 0.3 });
-      gsap.to('#orc-exploded', { opacity: 0, duration: 0.5 });
-      gsap.to('#factory-group', { opacity: 1, duration: 0.3 });
-      gsap.to('#hot-outflow', { opacity: 1, duration: 0.5, delay: 0.2 });
-      gsap.to('#direct-to-river', { opacity: 1, duration: 0.5, delay: 0.5 });
-      animateFlowDashes('.hot-flow', 20);
-      animateFlowDashes('.hot-flow-river', 20, 0.3);
-      animateSteam();
-    }
-
-    // Stage 2: ORC system installed
-    function showStage2(prev) {
-      gsap.to('#direct-to-river', { opacity: 0, duration: 0.4 });
-      gsap.to('#orc-exploded', { opacity: 0, duration: 0.5 });
-      gsap.to('#electricity-group', { opacity: 0, duration: 0.3 });
-      gsap.to('#factory-group', { opacity: 1, duration: 0.3 });
-      gsap.to('#hot-outflow', { opacity: 0, duration: 0.3 }); // hide simple outflow, orc-exterior has its own pipes
-      gsap.to('#orc-exterior', { opacity: 1, duration: 0.6, delay: 0.3 });
-      animateFlowDashes('#pipe-hot-in', 20, 0.3);
-      animateFlowDashes('#pipe-cool-out', 20, 0.5);
-      animateStatusLight();
-      animateSteam();
-    }
-
-    // Stage 3: Electricity output
-    function showStage3(prev) {
-      gsap.to('#direct-to-river', { opacity: 0, duration: 0.3 });
-      gsap.to('#orc-exploded', { opacity: 0, duration: 0.5 });
-      gsap.to('#hot-outflow', { opacity: 0, duration: 0.3 });
-      gsap.to('#factory-group', { opacity: 1, duration: 0.3 });
-      gsap.to('#orc-exterior', { opacity: 1, duration: 0.3 });
-      gsap.to('#electricity-group', { opacity: 1, duration: 0.6, delay: 0.3 });
-      animateFlowDashes('#pipe-hot-in', 20);
-      animateFlowDashes('#pipe-cool-out', 20);
-      animateStatusLight();
-      animatePowerCounter();
-      animateBolt();
-      animateSteam();
-    }
-
-    // Stage 4: Exploded ORC view
-    function showStage4(prev) {
-      // Fade out overview
-      gsap.to('#factory-group', { opacity: 0, duration: 0.6 });
-      gsap.to('#orc-exterior', { opacity: 0, duration: 0.6 });
-      gsap.to('#electricity-group', { opacity: 0, duration: 0.6 });
-      gsap.to('#hot-outflow', { opacity: 0, duration: 0.4 });
-      gsap.to('#direct-to-river', { opacity: 0, duration: 0.4 });
-
-      // Reveal exploded view with staggered components
-      gsap.to('#orc-exploded', { opacity: 1, duration: 0.5, delay: 0.5 });
-
-      // Stagger each component
-      const components = ['#comp-evaporator', '#flow-evap-turb', '#comp-turbine', '#flow-turb-gen',
-                          '#comp-generator', '#flow-turb-cond', '#comp-condenser', '#flow-cond-pump',
-                          '#comp-pump', '#flow-pump-evap', '#cycle-label'];
-
-      components.forEach((sel, i) => {
-        gsap.fromTo(sel, { opacity: 0, y: 15 }, { opacity: 1, y: 0, duration: 0.4, delay: 0.7 + i * 0.15 });
-      });
-
-      // Animate turbine spinning
-      animateTurbineSpin();
-
-      // Animate dashed flow lines
-      setTimeout(() => {
-        animateFlowDashes('#flow-evap-turb line', 20, 0);
-        animateFlowDashes('#flow-turb-cond path', 20, 0);
-        animateFlowDashes('#flow-cond-pump line', 20, 0);
-        animateFlowDashes('#flow-pump-evap path', 20, 0);
-      }, 1500);
-    }
-
-    // ======================== ANIMATION HELPERS ========================
-    function animateFlowDashes(selector, dashLen, delay = 0) {
-      gsap.to(selector, {
-        strokeDashoffset: -dashLen,
-        duration: 0.5,
-        repeat: -1,
-        ease: 'none',
-        delay: delay
-      });
-    }
-
-    function animateSteam() {
-      gsap.to('#steam1', { y: -8, opacity: 0.15, duration: 2, repeat: -1, yoyo: true, ease: 'sine.inOut' });
-      gsap.to('#steam2', { y: -6, opacity: 0.1, duration: 2.5, repeat: -1, yoyo: true, ease: 'sine.inOut', delay: 0.5 });
-    }
-
-    function animateStatusLight() {
-      gsap.to('#status-light', {
-        opacity: 0.3, duration: 0.8, repeat: -1, yoyo: true, ease: 'sine.inOut'
-      });
-    }
-
-    function animatePowerCounter() {
-      let val = 0;
-      const target = 150;
-      const el = document.getElementById('power-value');
-      powerInterval = setInterval(() => {
-        val += 3;
-        if (val >= target) { val = target; clearInterval(powerInterval); }
-        el.textContent = val + ' kW';
-      }, 30);
-    }
-
-    function animateBolt() {
-      gsap.to('#bolt', {
-        opacity: 0.4, duration: 0.3, repeat: -1, yoyo: true, ease: 'steps(1)'
-      });
-    }
-
-    function animateTurbineSpin() {
-      const blades = document.querySelector('#comp-turbine g');
-      if (blades) {
-        gsap.to(blades, { rotation: 360, duration: 2, repeat: -1, ease: 'none', transformOrigin: 'center center' });
-      }
-    }
-
-    // ======================== KEYBOARD NAV ========================
-    document.addEventListener('keydown', (e) => {
-      if (e.key === 'ArrowRight' || e.key === ' ') {
-        e.preventDefault();
-        if (currentStage < totalStages - 1) goToStage(currentStage + 1);
-      } else if (e.key === 'ArrowLeft') {
-        e.preventDefault();
-        if (currentStage > 0) goToStage(currentStage - 1);
-      }
-    });
-
-    // ======================== START ========================
-    animateSteam();
+ReactDOM.createRoot(document.getElementById('root')).render(React.createElement(ORCSystem));
   </script>
 </body>
 </html>
